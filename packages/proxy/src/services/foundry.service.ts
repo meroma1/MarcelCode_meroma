@@ -6,10 +6,25 @@ let client: Anthropic;
 
 function getClient(): Anthropic {
   if (!client) {
+    const apiKey = env.ANTHROPIC_API_KEY?.trim();
+    if (!apiKey || apiKey === 'sk-ant-your-api-key-here' || apiKey.length < 20) {
+      logger.error({ 
+        apiKeyPrefix: apiKey?.substring(0, 15) + '...',
+        apiKeyLength: apiKey?.length,
+        hasValue: !!apiKey,
+      }, 'Invalid or missing ANTHROPIC_API_KEY');
+      throw new Error('ANTHROPIC_API_KEY is missing or invalid. Please set a valid API key in docker/.env');
+    }
+    // Log the key prefix and length for debugging (without exposing the full key)
+    logger.info({ 
+      apiKeyPrefix: apiKey.substring(0, 20) + '...',
+      apiKeyLength: apiKey.length,
+      apiKeyStartsCorrectly: apiKey.startsWith('sk-ant-api03-'),
+    }, 'Initializing Anthropic client');
     client = new Anthropic({
-      apiKey: env.ANTHROPIC_API_KEY,
+      apiKey,
     });
-    logger.info('Anthropic client initialized (direct API)');
+    logger.info({ apiKeyPrefix: apiKey.substring(0, 20) + '...' }, 'Anthropic client initialized (direct API)');
   }
   return client;
 }
@@ -36,9 +51,20 @@ export async function createStream(options: FoundryStreamOptions) {
     params.tools = options.tools;
   }
 
-  const stream = anthropic.messages.stream(params);
-
-  return stream;
+  try {
+    const stream = anthropic.messages.stream(params);
+    return stream;
+  } catch (err: any) {
+    logger.error({ 
+      err, 
+      model: options.model,
+      apiKeyPrefix: env.ANTHROPIC_API_KEY?.substring(0, 15) + '...',
+      errorMessage: err?.message,
+      errorStatus: err?.status,
+      errorCode: err?.code,
+    }, 'Failed to create Anthropic stream');
+    throw err;
+  }
 }
 
 export async function createMessage(options: FoundryStreamOptions) {
