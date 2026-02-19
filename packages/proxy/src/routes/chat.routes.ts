@@ -67,6 +67,64 @@ const WORKSPACE_TOOLS = [
       },
     },
   },
+  {
+    name: 'create_absolute_path_file',
+    description: 'Create a file or directory at an absolute path on the filesystem (outside the workspace). Use this tool when the user asks to create files or folders anywhere on their computer, including on drive C: or other locations. The directory path will be created automatically if it does not exist. This tool can create files and folders outside the VS Code workspace. You can call this tool multiple times in sequence to create a complete project structure with multiple directories and files.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        absolute_path: { 
+          type: 'string', 
+          description: 'Absolute file path (e.g., "C:\\Users\\username\\Documents\\file.txt" on Windows or "/home/username/file.txt" on Linux/Mac)' 
+        },
+        content: { 
+          type: 'string', 
+          description: 'File content to write. If creating a directory, leave empty or omit this field.' 
+        },
+        create_as_directory: {
+          type: 'boolean',
+          description: 'If true, create a directory instead of a file. Defaults to false.',
+        },
+      },
+      required: ['absolute_path'],
+    },
+  },
+  {
+    name: 'read_absolute_path_file',
+    description: 'Read the contents of a file at an absolute path on the filesystem (outside the workspace). Use this tool to read and examine code from files anywhere on the system, including on drive C: or other locations. After reading a file, you can explain its code, suggest improvements, or modify it.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        absolute_path: { 
+          type: 'string', 
+          description: 'Absolute file path to read (e.g., "C:\\Users\\username\\Documents\\file.txt" on Windows or "/home/username/file.txt" on Linux/Mac)' 
+        },
+      },
+      required: ['absolute_path'],
+    },
+  },
+  {
+    name: 'edit_absolute_path_file',
+    description: 'Edit a file at an absolute path on the filesystem (outside the workspace) by replacing a specific text section. The old_text must match exactly. Use this tool to modify code in files anywhere on the system. Always read the file first with read_absolute_path_file to see its current content before editing.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        absolute_path: { 
+          type: 'string', 
+          description: 'Absolute file path to edit (e.g., "C:\\Users\\username\\Documents\\file.txt" on Windows or "/home/username/file.txt" on Linux/Mac)' 
+        },
+        old_text: { 
+          type: 'string', 
+          description: 'Exact text to find in the file (must match exactly, including whitespace and line breaks)' 
+        },
+        new_text: { 
+          type: 'string', 
+          description: 'Text to replace it with' 
+        },
+      },
+      required: ['absolute_path', 'old_text', 'new_text'],
+    },
+  },
 ];
 
 const BUILT_IN_TOOL_NAMES = new Set(WORKSPACE_TOOLS.map(t => t.name));
@@ -99,10 +157,25 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
       }
 
       contextSection += '\nTu disposes d\'outils pour lire, créer, modifier et lister les fichiers de ce workspace. Utilise read_file pour examiner le code avant de répondre. Utilise write_file/edit_file pour créer ou modifier du code quand l\'utilisateur le demande.';
+      
+      // Add info about absolute path tools (concise)
+      contextSection += '\n\nPour créer, lire ou modifier des fichiers en dehors du workspace (par exemple sur le disque C:), utilise les outils create_absolute_path_file, read_absolute_path_file et edit_absolute_path_file sans expliquer quel outil tu utilises. Sois concis et passe à l\'action.';
+      contextSection += '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet, crée d\'abord la structure de dossiers, puis les fichiers un par un. Utilise create_absolute_path_file pour créer chaque élément.';
+      contextSection += '\n\nQuand l\'utilisateur demande d\'expliquer un code, lis d\'abord le fichier avec read_absolute_path_file (si en dehors du workspace) ou read_file (si dans le workspace), puis explique le code de manière claire et détaillée en français.';
+      contextSection += '\n\nQuand l\'utilisateur demande de modifier un code, lis d\'abord le fichier pour voir son contenu actuel, puis utilise edit_absolute_path_file (si en dehors du workspace) ou edit_file (si dans le workspace) pour faire les modifications demandées.';
 
       systemPrompt = systemPrompt
         ? `${systemPrompt}\n\n${contextSection}`
         : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.\n${contextSection}`;
+    } else {
+      // Even without workspace, mention the absolute path tools (concise)
+      const absolutePathInfo = '\n\nPour créer, lire ou modifier des fichiers sur le système (par exemple sur le disque C:), utilise directement les outils create_absolute_path_file, read_absolute_path_file et edit_absolute_path_file sans expliquer quel outil tu utilises. Sois concis et passe à l\'action.';
+      const projectInfo = '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet dans un langage donné, crée d\'abord la structure de dossiers, puis les fichiers nécessaires (package.json, README.md, fichiers sources, etc.) un par un.';
+      const explainInfo = '\n\nQuand l\'utilisateur demande d\'expliquer un code, lis d\'abord le fichier avec read_absolute_path_file, puis explique le code de manière claire et détaillée en français.';
+      const editInfo = '\n\nQuand l\'utilisateur demande de modifier un code, lis d\'abord le fichier avec read_absolute_path_file pour voir son contenu actuel, puis utilise edit_absolute_path_file pour faire les modifications demandées.';
+      systemPrompt = systemPrompt
+        ? `${systemPrompt}${absolutePathInfo}${projectInfo}${explainInfo}${editInfo}`
+        : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.${absolutePathInfo}${projectInfo}${explainInfo}${editInfo}`;
     }
 
     // Apply plugin prompt extensions
@@ -144,10 +217,39 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
             && !BUILT_IN_TOOL_NAMES.has(t.name)
         );
         const allPluginTools = [...proxyPluginTools, ...clientPluginTools];
+        
+        // Always include absolute path tools (works outside workspace)
+        const absolutePathTools = WORKSPACE_TOOLS.filter(t => 
+          t.name === 'create_absolute_path_file' || 
+          t.name === 'read_absolute_path_file' || 
+          t.name === 'edit_absolute_path_file'
+        );
+        
+        let tools;
         if (hasWorkspace) {
-          return [...WORKSPACE_TOOLS, ...allPluginTools];
+          tools = [...WORKSPACE_TOOLS, ...allPluginTools];
+        } else {
+          // Even without workspace, include absolute path tools
+          tools = absolutePathTools.length > 0 || allPluginTools.length > 0 
+            ? [...absolutePathTools, ...allPluginTools] 
+            : undefined;
         }
-        return allPluginTools.length > 0 ? allPluginTools : undefined;
+        
+        // Log available tools for debugging
+        if (tools && tools.length > 0) {
+          const toolNames = tools.map((t: any) => t.name).join(', ');
+          logger.debug({ 
+            requestId, 
+            hasWorkspace,
+            toolCount: tools.length,
+            toolNames,
+            hasAbsolutePathTool: tools.some((t: any) => t.name === 'create_absolute_path_file'),
+          }, 'Tools available for Claude');
+        } else {
+          logger.debug({ requestId, hasWorkspace }, 'No tools available for Claude');
+        }
+        
+        return tools;
       })(),
     });
 
@@ -176,10 +278,24 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
         cached: false,
       }, systemPrompt).catch((err) => logger.error({ err }, 'Cache write failed'));
     }
-  } catch (err) {
-    logger.error({ err, requestId }, 'Chat request failed');
+  } catch (err: any) {
+    const errorDetails = {
+      message: err?.message,
+      stack: err?.stack,
+      name: err?.name,
+      status: err?.status,
+      code: err?.code,
+      type: err?.type,
+    };
+    logger.error({ err, requestId, errorDetails }, 'Chat request failed');
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Chat request failed', code: 'CHAT_ERROR', requestId });
+      const errorMessage = err?.message || 'Chat request failed';
+      res.status(500).json({ 
+        error: errorMessage, 
+        code: err?.code || 'CHAT_ERROR', 
+        requestId,
+        details: process.env.NODE_ENV === 'development' ? errorDetails : undefined,
+      });
     }
   }
 });

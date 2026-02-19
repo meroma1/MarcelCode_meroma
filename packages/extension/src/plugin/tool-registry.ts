@@ -8,6 +8,9 @@ const BUILT_IN_TOOLS = new Set([
   'edit_file',
   'create_directory',
   'list_files',
+  'create_absolute_path_file',
+  'read_absolute_path_file',
+  'edit_absolute_path_file',
 ]);
 
 export class ToolRegistry {

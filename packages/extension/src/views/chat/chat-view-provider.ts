@@ -5,6 +5,7 @@ import { collectContext } from '../../services/context-collector';
 import { WorkspaceScanner } from '../../services/workspace-scanner';
 import { JsonContentExtractor } from '../../services/json-content-extractor';
 import { StreamingEditorManager } from '../../services/streaming-editor';
+import { AbsolutePathService } from '../../services/absolute-path-service';
 import { AuthProvider } from '../../auth/auth-provider';
 import { PluginRegistry } from '../../plugin';
 
@@ -28,6 +29,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private history: ChatMessage[] = [];
   private workspaceScanner: WorkspaceScanner;
   private streamingEditor: StreamingEditorManager;
+  private absolutePathService: AbsolutePathService;
   private activeExtractors: Map<string, JsonContentExtractor> = new Map();
   private pendingConfirmations: Map<string, { resolve: (approved: boolean) => void }> = new Map();
   private streamedToolPaths: Map<string, string> = new Map();
@@ -40,6 +42,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   ) {
     this.workspaceScanner = new WorkspaceScanner();
     this.streamingEditor = new StreamingEditorManager();
+    this.absolutePathService = new AbsolutePathService();
 
     // Listen for auth state changes to show/hide login screen
     this.authProvider.onDidChange(() => {
@@ -552,6 +555,150 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           return { toolCallId: id, content: files.join('\n') || 'No files found.' };
         }
 
+        case 'create_absolute_path_file': {
+          // Toujours demander confirmation pour les chemins absolus (sécurité)
+          const confirmed = await this.requestInlineConfirmation(
+            id,
+            `Créer ${input.create_as_directory ? 'dossier' : 'fichier'} à: ${input.absolute_path}`,
+          );
+          if (!confirmed) {
+            this.postToWebview({
+              type: 'toolStatus',
+              toolId: id,
+              status: 'denied',
+              label: `Refusé: ${input.absolute_path}`,
+            });
+            return {
+              toolCallId: id,
+              content: 'User denied the absolute path file/directory creation operation.',
+              isError: true,
+            };
+          }
+
+          try {
+            if (input.create_as_directory) {
+              // Créer un dossier
+              const success = await this.absolutePathService.createDirectory(input.absolute_path);
+              if (!success) {
+                return {
+                  toolCallId: id,
+                  content: `Error: could not create directory: ${input.absolute_path}`,
+                  isError: true,
+                };
+              }
+              this.postToWebview({
+                type: 'toolStatus',
+                toolId: id,
+                status: 'done',
+                label: `Dossier créé: ${input.absolute_path}`,
+              });
+              return { toolCallId: id, content: `Directory created successfully: ${input.absolute_path}` };
+            } else {
+              // Créer un fichier
+              const content = input.content || '';
+              const success = await this.absolutePathService.createFile(input.absolute_path, content);
+              if (!success) {
+                return {
+                  toolCallId: id,
+                  content: `Error: could not create file: ${input.absolute_path}`,
+                  isError: true,
+                };
+              }
+              this.postToWebview({
+                type: 'toolStatus',
+                toolId: id,
+                status: 'done',
+                label: `Fichier créé: ${input.absolute_path}`,
+              });
+              return { toolCallId: id, content: `File created successfully: ${input.absolute_path}` };
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Unknown error';
+            return {
+              toolCallId: id,
+              content: `Error: ${msg}`,
+              isError: true,
+            };
+          }
+        }
+
+        case 'read_absolute_path_file': {
+          try {
+            const content = await this.absolutePathService.readFile(input.absolute_path);
+            if (content === null) {
+              return {
+                toolCallId: id,
+                content: `Error: file not found or could not be read: ${input.absolute_path}`,
+                isError: true,
+              };
+            }
+            this.postToWebview({
+              type: 'toolStatus',
+              toolId: id,
+              status: 'done',
+              label: `Fichier lu: ${input.absolute_path}`,
+            });
+            return { toolCallId: id, content: `File content:\n\`\`\`\n${content}\n\`\`\`` };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Unknown error';
+            return {
+              toolCallId: id,
+              content: `Error: ${msg}`,
+              isError: true,
+            };
+          }
+        }
+
+        case 'edit_absolute_path_file': {
+          // Toujours demander confirmation pour les modifications (sécurité)
+          const confirmed = await this.requestInlineConfirmation(
+            id,
+            `Modifier le fichier: ${input.absolute_path}`,
+          );
+          if (!confirmed) {
+            this.postToWebview({
+              type: 'toolStatus',
+              toolId: id,
+              status: 'denied',
+              label: `Refusé: ${input.absolute_path}`,
+            });
+            return {
+              toolCallId: id,
+              content: 'User denied the file edit operation.',
+              isError: true,
+            };
+          }
+
+          try {
+            const success = await this.absolutePathService.editFile(
+              input.absolute_path,
+              input.old_text,
+              input.new_text,
+            );
+            if (!success) {
+              return {
+                toolCallId: id,
+                content: `Error: could not edit file: ${input.absolute_path}. Make sure old_text matches exactly the content in the file.`,
+                isError: true,
+              };
+            }
+            this.postToWebview({
+              type: 'toolStatus',
+              toolId: id,
+              status: 'done',
+              label: `Fichier modifié: ${input.absolute_path}`,
+            });
+            return { toolCallId: id, content: `File edited successfully: ${input.absolute_path}` };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Unknown error';
+            return {
+              toolCallId: id,
+              content: `Error: ${msg}`,
+              isError: true,
+            };
+          }
+        }
+
         default: {
           // Check plugin tools registry
           if (this.pluginRegistry.tools.has(name)) {
@@ -976,6 +1123,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       'edit_file': '\\u270F\\uFE0F',
       'create_directory': '\\u{1F4C1}',
       'list_files': '\\u{1F4CB}',
+      'create_absolute_path_file': '\\u{1F4C2}',
+      'read_absolute_path_file': '\\u{1F4D6}',
+      'edit_absolute_path_file': '\\u270F\\uFE0F',
     };
 
     const TOOL_LABELS = {
@@ -984,6 +1134,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       'edit_file': 'Modification de fichier',
       'create_directory': 'Cr\\u00e9ation de dossier',
       'list_files': 'Liste des fichiers',
+      'create_absolute_path_file': 'Cr\\u00e9ation sur le syst\\u00e8me',
+      'read_absolute_path_file': 'Lecture sur le syst\\u00e8me',
+      'edit_absolute_path_file': 'Modification sur le syst\\u00e8me',
     };
 
     const FILE_EXT_ICONS = {

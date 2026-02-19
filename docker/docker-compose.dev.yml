@@ -7,6 +7,8 @@ services:
     command: npx tsx watch packages/proxy/src/index.ts
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       - NODE_ENV=development
       - PORT=3000
