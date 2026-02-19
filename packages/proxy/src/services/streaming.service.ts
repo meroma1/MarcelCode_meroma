@@ -82,9 +82,18 @@ export async function forwardFoundryStream(
       messageId,
       stopReason,
     };
-  } catch (err) {
-    logger.error({ err, requestId }, 'Streaming error');
-    sendSSEError(res, 'Streaming error occurred');
+  } catch (err: any) {
+    const message = err?.message || err?.toString?.() || 'Streaming error occurred';
+    const errorDetails = {
+      message,
+      status: err?.status,
+      code: err?.code,
+      type: err?.type,
+      statusCode: err?.statusCode,
+      response: err?.response?.data || err?.response,
+    };
+    logger.error({ err, requestId, errorDetails }, 'Streaming error');
+    sendSSEError(res, `${message}${err?.status ? ` (status: ${err.status})` : ''}${err?.code ? ` (code: ${err.code})` : ''}`);
     throw err;
   }
 }

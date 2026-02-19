@@ -88,15 +88,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Proactively check auth on webview init (non-blocking)
     const isDevMode = vscode.workspace.getConfiguration('marcelia').get('devMode', false);
     if (!isDevMode) {
-      this.authProvider.ensureAuthenticated().then((authenticated) => {
-        if (!authenticated) {
-          this.postToWebview({ type: 'showLoginScreen' });
-        }
-      }).catch(() => {});
+      this.authProvider
+        .ensureAuthenticated()
+        .then((authenticated) => {
+          if (!authenticated) {
+            this.postToWebview({ type: 'showLoginScreen' });
+          }
+        })
+        .catch(() => {});
     }
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
+        case 'checkDevMode': {
+          // Webview is asking if we're in dev mode
+          const isDevMode = vscode.workspace.getConfiguration('marcelia').get('devMode', false);
+          if (isDevMode) {
+            this.postToWebview({ type: 'hideLoginScreen' });
+          }
+          break;
+        }
         case 'sendMessage':
           await this.handleUserMessage(message.text);
           break;
@@ -206,10 +217,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       // Apply plugin prompt transformers
       try {
         systemPrompt = this.pluginRegistry.promptTransformers.transform(systemPrompt, {
-          codebaseContext: codebaseContext ? {
-            rootName: codebaseContext.rootName,
-            fileTree: codebaseContext.fileTree,
-          } : undefined,
+          codebaseContext: codebaseContext
+            ? {
+                rootName: codebaseContext.rootName,
+                fileTree: codebaseContext.fileTree,
+              }
+            : undefined,
           conversationLength: this.history.length,
         });
       } catch {
@@ -217,7 +230,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
 
       await this.streamWithToolLoop(systemPrompt, codebaseContext);
-
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Unknown error';
       // Detect 401/auth errors and redirect to login screen
@@ -239,8 +251,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const msg = this.history[i];
       if (Array.isArray(msg.content)) {
         msg.content = msg.content.map((block: any) => {
-          if (block.type === 'tool_result' && typeof block.content === 'string' && block.content.length > TOOL_RESULT_TRUNCATE_CHARS) {
-            return { ...block, content: block.content.slice(0, TOOL_RESULT_TRUNCATE_CHARS) + '\n[...tronqué]' };
+          if (
+            block.type === 'tool_result' &&
+            typeof block.content === 'string' &&
+            block.content.length > TOOL_RESULT_TRUNCATE_CHARS
+          ) {
+            return {
+              ...block,
+              content: block.content.slice(0, TOOL_RESULT_TRUNCATE_CHARS) + '\n[...tronqué]',
+            };
           }
           return block;
         });
@@ -394,9 +413,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'read_file': {
           const file = await this.workspaceScanner.readFile(input.path);
           if (!file) {
-            return { toolCallId: id, content: `Error: file not found: ${input.path}`, isError: true };
+            return {
+              toolCallId: id,
+              content: `Error: file not found: ${input.path}`,
+              isError: true,
+            };
           }
-          this.postToWebview({ type: 'toolStatus', toolId: id, status: 'done', label: `Lu: ${input.path}` });
+          this.postToWebview({
+            type: 'toolStatus',
+            toolId: id,
+            status: 'done',
+            label: `Lu: ${input.path}`,
+          });
           return { toolCallId: id, content: file.content };
         }
 
@@ -405,14 +433,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           this.streamedToolPaths.delete(id);
 
           if (confirmLevel === 'always' || confirmLevel === 'write-only') {
-            const confirmed = await this.requestInlineConfirmation(id, `Créer/écrire: ${input.path}`);
+            const confirmed = await this.requestInlineConfirmation(
+              id,
+              `Créer/écrire: ${input.path}`,
+            );
             if (!confirmed) {
               // Revert: cancel streaming and delete the partial file
               if (wasStreamed && rootFolder) {
                 await this.streamingEditor.revert(rootFolder, input.path);
               }
-              this.postToWebview({ type: 'toolStatus', toolId: id, status: 'denied', label: `Refusé: ${input.path}` });
-              return { toolCallId: id, content: 'User denied the file write operation.', isError: true };
+              this.postToWebview({
+                type: 'toolStatus',
+                toolId: id,
+                status: 'denied',
+                label: `Refusé: ${input.path}`,
+              });
+              return {
+                toolCallId: id,
+                content: 'User denied the file write operation.',
+                isError: true,
+              };
             }
           }
 
@@ -423,7 +463,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           // even if streaming partially succeeded
           const success = await this.workspaceScanner.writeFile(input.path, input.content);
           if (!success) {
-            return { toolCallId: id, content: `Error: could not write file: ${input.path}`, isError: true };
+            return {
+              toolCallId: id,
+              content: `Error: could not write file: ${input.path}`,
+              isError: true,
+            };
           }
 
           // If not already open in editor (streaming opened it), open now
@@ -431,7 +475,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             await this.openFileInEditor(input.path);
           }
 
-          this.postToWebview({ type: 'toolStatus', toolId: id, status: 'done', label: `Créé: ${input.path}` });
+          this.postToWebview({
+            type: 'toolStatus',
+            toolId: id,
+            status: 'done',
+            label: `Créé: ${input.path}`,
+          });
           return { toolCallId: id, content: `File written successfully: ${input.path}` };
         }
 
@@ -439,31 +488,67 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           if (confirmLevel === 'always' || confirmLevel === 'write-only') {
             const confirmed = await this.requestInlineConfirmation(id, `Modifier: ${input.path}`);
             if (!confirmed) {
-              this.postToWebview({ type: 'toolStatus', toolId: id, status: 'denied', label: `Refusé: ${input.path}` });
-              return { toolCallId: id, content: 'User denied the file edit operation.', isError: true };
+              this.postToWebview({
+                type: 'toolStatus',
+                toolId: id,
+                status: 'denied',
+                label: `Refusé: ${input.path}`,
+              });
+              return {
+                toolCallId: id,
+                content: 'User denied the file edit operation.',
+                isError: true,
+              };
             }
           }
-          const success = await this.workspaceScanner.editFile(input.path, input.old_text, input.new_text);
+          const success = await this.workspaceScanner.editFile(
+            input.path,
+            input.old_text,
+            input.new_text,
+          );
           if (!success) {
-            return { toolCallId: id, content: `Error: could not edit file (text not found): ${input.path}`, isError: true };
+            return {
+              toolCallId: id,
+              content: `Error: could not edit file (text not found): ${input.path}`,
+              isError: true,
+            };
           }
           await this.openFileInEditor(input.path);
-          this.postToWebview({ type: 'toolStatus', toolId: id, status: 'done', label: `Modifié: ${input.path}` });
+          this.postToWebview({
+            type: 'toolStatus',
+            toolId: id,
+            status: 'done',
+            label: `Modifié: ${input.path}`,
+          });
           return { toolCallId: id, content: `File edited successfully: ${input.path}` };
         }
 
         case 'create_directory': {
           const success = await this.workspaceScanner.createDirectory(input.path);
           if (!success) {
-            return { toolCallId: id, content: `Error: could not create directory: ${input.path}`, isError: true };
+            return {
+              toolCallId: id,
+              content: `Error: could not create directory: ${input.path}`,
+              isError: true,
+            };
           }
-          this.postToWebview({ type: 'toolStatus', toolId: id, status: 'done', label: `Dossier créé: ${input.path}` });
+          this.postToWebview({
+            type: 'toolStatus',
+            toolId: id,
+            status: 'done',
+            label: `Dossier créé: ${input.path}`,
+          });
           return { toolCallId: id, content: `Directory created: ${input.path}` };
         }
 
         case 'list_files': {
           const files = await this.workspaceScanner.listFiles(input.path, input.pattern);
-          this.postToWebview({ type: 'toolStatus', toolId: id, status: 'done', label: `${files.length} fichiers listés` });
+          this.postToWebview({
+            type: 'toolStatus',
+            toolId: id,
+            status: 'done',
+            label: `${files.length} fichiers listés`,
+          });
           return { toolCallId: id, content: files.join('\n') || 'No files found.' };
         }
 
@@ -471,7 +556,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           // Check plugin tools registry
           if (this.pluginRegistry.tools.has(name)) {
             const result = await this.pluginRegistry.tools.execute(name, input);
-            this.postToWebview({ type: 'toolStatus', toolId: id, status: 'done', label: `Plugin: ${name}` });
+            this.postToWebview({
+              type: 'toolStatus',
+              toolId: id,
+              status: 'done',
+              label: `Plugin: ${name}`,
+            });
             return { toolCallId: id, content: result.content, isError: result.isError };
           }
           return { toolCallId: id, content: `Unknown tool: ${name}`, isError: true };
@@ -515,7 +605,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return;
       } catch {
         if (attempt === 0) {
-          await new Promise(r => setTimeout(r, 200));
+          await new Promise((r) => setTimeout(r, 200));
         }
       }
     }
@@ -527,6 +617,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private getHtml(webview: vscode.Webview): string {
     const nonce = getNonce();
+    const isDevMode = vscode.workspace.getConfiguration('marcelia').get('devMode', false);
+    // In dev mode: hide login screen (no 'visible' class), show app content (no 'hidden' class)
+    // In normal mode: show login screen by default ('visible' class), hide app content ('hidden' class)
+    const loginScreenClass = isDevMode ? '' : 'visible';
+    const appContentClass = isDevMode ? '' : 'hidden';
+
+    // Debug log
+    console.log(
+      `[Marcel'IA] getHtml: devMode=${isDevMode}, loginScreenClass="${loginScreenClass}", appContentClass="${appContentClass}"`,
+    );
 
     return `<!DOCTYPE html>
 <html lang="fr">
@@ -824,12 +924,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   </style>
 </head>
 <body>
-  <div id="login-screen">
+  <div id="login-screen" class="${loginScreenClass}">
     <h2>Connexion requise</h2>
     <p>Connectez-vous avec votre compte ERANOVE pour acc\u00e9der \u00e0 Marcel'IA</p>
     <button id="login-btn">Se connecter</button>
   </div>
-  <div class="app-content" id="app-content">
+  <div class="app-content ${appContentClass}" id="app-content">
     <div class="toolbar">
       <button id="clear-btn" title="Effacer l'historique">Effacer</button>
     </div>
@@ -853,6 +953,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     let isStreaming = false;
     let fullAssistantText = '';
     let renderPending = false;
+
+    // Ensure login screen is hidden in dev mode on page load
+    // This is a safety check in case the HTML classes weren't applied correctly
+    const checkDevMode = () => {
+      // Check if login screen has 'visible' class but shouldn't
+      if (loginScreen && loginScreen.classList.contains('visible')) {
+        // Request dev mode status from extension
+        vscode.postMessage({ type: 'checkDevMode' });
+      }
+    };
+    // Run check after a short delay to ensure DOM is ready
+    setTimeout(checkDevMode, 50);
 
     loginBtn.addEventListener('click', () => {
       vscode.postMessage({ type: 'signIn' });

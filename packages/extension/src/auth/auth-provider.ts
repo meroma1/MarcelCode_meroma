@@ -5,14 +5,34 @@ const SCOPES = ['openid', 'profile', 'email', 'offline_access'];
 
 export class AuthProvider {
   private session: vscode.AuthenticationSession | undefined;
+  private isInitialized = false;
   private readonly onDidChangeEmitter = new vscode.EventEmitter<void>();
   public readonly onDidChange = this.onDidChangeEmitter.event;
+
+  async initializeSession(): Promise<void> {
+    if (this.isInitialized) {
+      return;
+    }
+
+    try {
+      this.session = await vscode.authentication.getSession(MICROSOFT_PROVIDER_ID, SCOPES, {
+        createIfNone: false,
+      });
+      this.isInitialized = true;
+      if (this.session) {
+        this.onDidChangeEmitter.fire();
+      }
+    } catch {
+      this.isInitialized = true;
+    }
+  }
 
   async signIn(): Promise<vscode.AuthenticationSession | undefined> {
     try {
       this.session = await vscode.authentication.getSession(MICROSOFT_PROVIDER_ID, SCOPES, {
         createIfNone: true,
       });
+      this.isInitialized = true;
       this.onDidChangeEmitter.fire();
       vscode.window.showInformationMessage(
         `Marcel'IA: Connecté en tant que ${this.session.account.label}`,
@@ -31,11 +51,16 @@ export class AuthProvider {
   }
 
   async getSession(): Promise<vscode.AuthenticationSession | undefined> {
+    // Ensure initialization has happened
+    if (!this.isInitialized) {
+      await this.initializeSession();
+    }
+
     if (this.session) {
       return this.session;
     }
 
-    // Try silent auth
+    // Try silent auth again if not yet initialized
     try {
       this.session = await vscode.authentication.getSession(MICROSOFT_PROVIDER_ID, SCOPES, {
         createIfNone: false,
@@ -47,13 +72,17 @@ export class AuthProvider {
   }
 
   async ensureAuthenticated(): Promise<boolean> {
-    // Try silent auth first
-    const existing = await this.getSession();
-    if (existing) {
+    // Ensure initialization has happened
+    if (!this.isInitialized) {
+      await this.initializeSession();
+    }
+
+    // If we have a session, we're authenticated
+    if (this.session) {
       return true;
     }
 
-    // Try interactive login
+    // Try interactive login only if we don't have a session
     console.log("Marcel'IA: session non restaurée, tentative de connexion interactive");
     const session = await this.signIn();
     return session !== undefined;

@@ -49,19 +49,13 @@ export function activate(context: vscode.ExtensionContext): MarceliaPluginAPI {
   // Register commands
   registerCommands(context, authProvider, apiClient, chatViewProvider);
 
-  // Auto-sign in silently (skip in devMode)
+  // Initialize session on extension activation (skip in devMode)
   const devMode = vscode.workspace.getConfiguration('marcelia').get('devMode', false);
   if (devMode) {
     vscode.window.showInformationMessage("Marcel'IA: Mode développement activé (proxy local)");
   } else {
-    authProvider.getSession().then((session) => {
-      if (session) {
-        vscode.window.showInformationMessage(
-          `Marcel'IA: Connecté en tant que ${session.account.label}`,
-        );
-      }
-    }).catch(() => {
-      // Silent auth failed, user can sign in manually
+    authProvider.initializeSession().catch(() => {
+      // Silent auth failed, user can sign in manually when opening chat
     });
   }
 
