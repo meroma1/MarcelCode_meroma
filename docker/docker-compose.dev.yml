@@ -16,6 +16,7 @@ services:
       - DATABASE_URL=postgresql://marcelia:marcelia_dev@postgres:5432/marcelia?schema=public
       - REDIS_URL=redis://redis:6379
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - AZURE_AUDIENCE=${AZURE_AUDIENCE:-api://marcelia}

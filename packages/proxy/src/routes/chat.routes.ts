@@ -91,7 +91,7 @@ const WORKSPACE_TOOLS = [
   },
   {
     name: 'read_absolute_path_file',
-    description: 'Read the contents of a file at an absolute path on the filesystem (outside the workspace). Use this tool to read and examine code from files anywhere on the system, including on drive C: or other locations. After reading a file, you can explain its code, suggest improvements, or modify it.',
+    description: 'Read the contents of a file at an absolute path on the filesystem (outside the workspace). Use this tool IMMEDIATELY when the user mentions a file path starting with C:\\, D:\\, etc., or asks to explain/modify a file outside the workspace. Do NOT ask the user to copy-paste the code - you can read it yourself! After reading, you can explain the code, suggest improvements, or modify it.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -150,32 +150,42 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
 
       // Include active file content if provided (small, relevant)
       if (files && files.length > 0) {
-        contextSection += '\n\nFichier(s) actuellement ouvert(s) :\n';
+        contextSection += '\n\nFichier(s) actuellement ouvert(s) dans l\'éditeur VS Code :\n';
         for (const file of files) {
           contextSection += `--- ${file.path} (${file.language}) ---\n${file.content}\n--- fin ---\n\n`;
         }
+        contextSection += '\nIMPORTANT: Quand l\'utilisateur demande d\'expliquer un code, le fichier ouvert est DÉJÀ disponible ci-dessus. Tu n\'as PAS besoin d\'utiliser read_file - explique directement le code qui est déjà fourni dans le contexte. Si l\'utilisateur demande d\'expliquer "ce code" ou "ce fichier" sans préciser de chemin, il fait référence au fichier ouvert ci-dessus.';
       }
 
-      contextSection += '\nTu disposes d\'outils pour lire, créer, modifier et lister les fichiers de ce workspace. Utilise read_file pour examiner le code avant de répondre. Utilise write_file/edit_file pour créer ou modifier du code quand l\'utilisateur le demande.';
+      contextSection += '\nTu disposes d\'outils pour lire, créer, modifier et lister les fichiers de ce workspace. Utilise read_file pour examiner d\'autres fichiers du workspace (pas le fichier déjà ouvert ci-dessus). Utilise write_file/edit_file pour créer ou modifier du code quand l\'utilisateur le demande.';
       
-      // Add info about absolute path tools (concise)
-      contextSection += '\n\nPour créer, lire ou modifier des fichiers en dehors du workspace (par exemple sur le disque C:), utilise les outils create_absolute_path_file, read_absolute_path_file et edit_absolute_path_file sans expliquer quel outil tu utilises. Sois concis et passe à l\'action.';
-      contextSection += '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet, crée d\'abord la structure de dossiers, puis les fichiers un par un. Utilise create_absolute_path_file pour créer chaque élément.';
-      contextSection += '\n\nQuand l\'utilisateur demande d\'expliquer un code, lis d\'abord le fichier avec read_absolute_path_file (si en dehors du workspace) ou read_file (si dans le workspace), puis explique le code de manière claire et détaillée en français.';
-      contextSection += '\n\nQuand l\'utilisateur demande de modifier un code, lis d\'abord le fichier pour voir son contenu actuel, puis utilise edit_absolute_path_file (si en dehors du workspace) ou edit_file (si dans le workspace) pour faire les modifications demandées.';
+      // Add info about absolute path tools (explicit)
+      contextSection += '\n\nIMPORTANT: Tu disposes également d\'outils pour travailler avec des fichiers EN DEHORS du workspace (sur le disque C:, D:, etc.) :';
+      contextSection += '\n- read_absolute_path_file : pour LIRE le contenu d\'un fichier (ex: "C:\\MonProjet\\main.py")';
+      contextSection += '\n- create_absolute_path_file : pour CRÉER des fichiers ou dossiers';
+      contextSection += '\n- edit_absolute_path_file : pour MODIFIER un fichier existant';
+      contextSection += '\n\nQuand l\'utilisateur mentionne un chemin absolu (commençant par C:\\, D:\\, etc.) ou demande d\'expliquer/modifier un fichier en dehors du workspace, utilise IMMÉDIATEMENT read_absolute_path_file pour lire le fichier, puis explique ou modifie selon la demande. Ne demande JAMAIS à l\'utilisateur de copier-coller le code - tu peux le lire toi-même !';
+      
+      // Add instruction about explaining code in open editor
+      if (files && files.length > 0) {
+        contextSection += '\n\nRAPPEL: Le fichier ouvert dans l\'éditeur est DÉJÀ disponible dans le contexte ci-dessus. Si l\'utilisateur demande d\'expliquer "ce code", "ce fichier" ou le code ouvert, explique directement sans utiliser read_file - le contenu est déjà là !';
+      }
+      contextSection += '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet, crée d\'abord la structure de dossiers, puis les fichiers un par un.';
 
       systemPrompt = systemPrompt
         ? `${systemPrompt}\n\n${contextSection}`
         : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.\n${contextSection}`;
     } else {
-      // Even without workspace, mention the absolute path tools (concise)
-      const absolutePathInfo = '\n\nPour créer, lire ou modifier des fichiers sur le système (par exemple sur le disque C:), utilise directement les outils create_absolute_path_file, read_absolute_path_file et edit_absolute_path_file sans expliquer quel outil tu utilises. Sois concis et passe à l\'action.';
+      // Even without workspace, mention the absolute path tools (explicit)
+      const absolutePathInfo = '\n\nIMPORTANT: Tu disposes d\'outils pour travailler avec des fichiers sur le système (disque C:, D:, etc.) :';
+      const toolsInfo = '\n- read_absolute_path_file : pour LIRE le contenu d\'un fichier (ex: "C:\\MonProjet\\main.py")';
+      const createInfo = '\n- create_absolute_path_file : pour CRÉER des fichiers ou dossiers';
+      const editInfo = '\n- edit_absolute_path_file : pour MODIFIER un fichier existant';
+      const usageInfo = '\n\nQuand l\'utilisateur mentionne un chemin absolu (commençant par C:\\, D:\\, etc.) ou demande d\'expliquer/modifier un fichier, utilise IMMÉDIATEMENT read_absolute_path_file pour lire le fichier, puis explique ou modifie selon la demande. Ne demande JAMAIS à l\'utilisateur de copier-coller le code - tu peux le lire toi-même !';
       const projectInfo = '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet dans un langage donné, crée d\'abord la structure de dossiers, puis les fichiers nécessaires (package.json, README.md, fichiers sources, etc.) un par un.';
-      const explainInfo = '\n\nQuand l\'utilisateur demande d\'expliquer un code, lis d\'abord le fichier avec read_absolute_path_file, puis explique le code de manière claire et détaillée en français.';
-      const editInfo = '\n\nQuand l\'utilisateur demande de modifier un code, lis d\'abord le fichier avec read_absolute_path_file pour voir son contenu actuel, puis utilise edit_absolute_path_file pour faire les modifications demandées.';
       systemPrompt = systemPrompt
-        ? `${systemPrompt}${absolutePathInfo}${projectInfo}${explainInfo}${editInfo}`
-        : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.${absolutePathInfo}${projectInfo}${explainInfo}${editInfo}`;
+        ? `${systemPrompt}${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}`
+        : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}`;
     }
 
     // Apply plugin prompt extensions

@@ -39,6 +39,15 @@ export function createApp() {
   apiRouter.use('/completion', completionRoutes);
   apiRouter.use('/review', reviewRoutes);
 
+  // Transcription (optionnel : nécessite multer + openai)
+  try {
+    const { transcribeRoutes } = require('./routes/transcribe.routes');
+    apiRouter.use('/transcribe', transcribeRoutes);
+    logger.info('Route /transcribe (transcription vocale) enregistrée');
+  } catch (err: any) {
+    logger.warn({ err: err?.message }, 'Transcription vocale non disponible (installez multer et openai pour l’activer)');
+  }
+
   // Plugin routes (after built-in routes)
   pluginRegistry.applyRoutes(apiRouter);
 

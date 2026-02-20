@@ -9,6 +9,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
   ANTHROPIC_API_KEY: z.string(),
+  OPENAI_API_KEY: z.string().optional(),
 
   AZURE_TENANT_ID: z.string().default('00000000-0000-0000-0000-000000000000'),
   AZURE_CLIENT_ID: z.string().default('00000000-0000-0000-0000-000000000000'),
