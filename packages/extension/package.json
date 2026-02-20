@@ -4,6 +4,10 @@
   "description": "Assistant IA pour le développement - Propulsé par Claude",
   "version": "1.0.0",
   "publisher": "eranove-gs2e",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eranove-gs2e/MarcelCode_meroma"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -146,7 +150,7 @@
     "build": "webpack --mode production",
     "dev": "webpack --mode development --watch",
     "package": "vsce package",
-    "package:vsix": "npm run build && vsce package --out marcelia.vsix",
+    "package:vsix": "npm run build && vsce package --out marcelia.vsix --allow-package-secrets openai --no-dependencies",
     "publish:private": "vsce publish --pat $VSCE_PAT",
     "test": "vitest run",
     "test:watch": "vitest",

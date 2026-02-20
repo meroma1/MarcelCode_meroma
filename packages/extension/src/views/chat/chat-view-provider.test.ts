@@ -67,8 +67,20 @@ function makeProvider() {
 
   const pluginRegistry = new PluginRegistry();
 
-  const provider = new ChatViewProvider(
+  const mockContext = {
     extensionUri,
+    globalState: {
+      get: vi.fn(),
+      update: vi.fn(),
+    },
+    workspaceState: {
+      get: vi.fn(),
+      update: vi.fn(),
+    },
+  } as any;
+
+  const provider = new ChatViewProvider(
+    mockContext,
     mockApiClient,
     mockAuthProvider,
     pluginRegistry,

@@ -18,7 +18,7 @@ export function activate(context: vscode.ExtensionContext): MarceliaPluginAPI {
   pluginRegistry = new PluginRegistry();
 
   // Register chat webview
-  const chatViewProvider = new ChatViewProvider(context.extensionUri, apiClient, authProvider, pluginRegistry);
+  const chatViewProvider = new ChatViewProvider(context, apiClient, authProvider, pluginRegistry);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('marcelia.chatView', chatViewProvider),
   );

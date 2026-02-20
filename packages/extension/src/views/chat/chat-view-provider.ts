@@ -33,9 +33,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private activeExtractors: Map<string, JsonContentExtractor> = new Map();
   private pendingConfirmations: Map<string, { resolve: (approved: boolean) => void }> = new Map();
   private streamedToolPaths: Map<string, string> = new Map();
+  private readonly HISTORY_KEY = 'marcelia.chat.history';
 
   constructor(
-    private readonly extensionUri: vscode.Uri,
+    private readonly context: vscode.ExtensionContext,
     private readonly apiClient: ApiClient,
     private readonly authProvider: AuthProvider,
     private readonly pluginRegistry: PluginRegistry,
@@ -78,13 +79,103 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private async loadHistory(): Promise<void> {
+    try {
+      const saved = this.context.globalState.get<ChatMessage[]>(this.HISTORY_KEY);
+      if (saved && Array.isArray(saved) && saved.length > 0) {
+        // Limit to MAX_HISTORY_MESSAGES to prevent loading too much
+        this.history = saved.slice(-MAX_HISTORY_MESSAGES);
+        console.log(`[Marcel'IA] Loading ${this.history.length} messages from history`);
+        
+        // Restore messages in webview (wait a bit for webview to be ready)
+        setTimeout(async () => {
+          for (let i = 0; i < this.history.length; i++) {
+            const msg = this.history[i];
+            console.log(`[Marcel'IA] Loading message ${i + 1}/${this.history.length}: role=${msg.role}, contentType=${typeof msg.content}`);
+            
+            // Add small delay between messages to ensure proper rendering
+            if (i > 0) {
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            
+            if (msg.role === 'user') {
+              if (typeof msg.content === 'string') {
+                this.postToWebview({ type: 'userMessage', text: msg.content });
+              } else if (Array.isArray(msg.content)) {
+                // Tool results - just show a placeholder
+                this.postToWebview({ type: 'userMessage', text: '[Résultats d\'outils]' });
+              }
+            } else if (msg.role === 'assistant') {
+              if (typeof msg.content === 'string') {
+                this.postToWebview({ type: 'assistantStart' });
+                // Send text in chunks to simulate streaming for better rendering
+                const text = msg.content;
+                const chunkSize = 100;
+                for (let j = 0; j < text.length; j += chunkSize) {
+                  this.postToWebview({ type: 'assistantDelta', text: text.slice(j, j + chunkSize) });
+                  await new Promise(resolve => setTimeout(resolve, 10));
+                }
+                this.postToWebview({ type: 'assistantDone' });
+                // Extra delay after assistantDone to ensure it's rendered
+                await new Promise(resolve => setTimeout(resolve, 100));
+              } else if (Array.isArray(msg.content)) {
+                // Complex message with tool_use - extract text parts
+                const textParts: string[] = [];
+                for (const block of msg.content) {
+                  if (block.type === 'text' && typeof block.text === 'string') {
+                    textParts.push(block.text);
+                  }
+                }
+                if (textParts.length > 0) {
+                  const fullText = textParts.join('');
+                  this.postToWebview({ type: 'assistantStart' });
+                  // Send text in chunks
+                  const chunkSize = 100;
+                  for (let j = 0; j < fullText.length; j += chunkSize) {
+                    this.postToWebview({ type: 'assistantDelta', text: fullText.slice(j, j + chunkSize) });
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                  }
+                  this.postToWebview({ type: 'assistantDone' });
+                  // Extra delay after assistantDone to ensure it's rendered
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                }
+              }
+            }
+          }
+          console.log(`[Marcel'IA] Finished loading ${this.history.length} messages`);
+          // Extra delay and scroll to ensure last message is visible
+          await new Promise(resolve => setTimeout(resolve, 200));
+          this.postToWebview({ type: 'scrollToBottom' });
+        }, 300);
+      }
+    } catch (error) {
+      console.error('[Marcel\'IA] Failed to load history:', error);
+    }
+  }
+
+  private async saveHistory(): Promise<void> {
+    try {
+      // Limit history size before saving to prevent storage issues
+      const historyToSave = this.history.slice(-MAX_HISTORY_MESSAGES);
+      await this.context.globalState.update(this.HISTORY_KEY, historyToSave);
+      console.log(`[Marcel'IA] Saved ${historyToSave.length} messages to history (last role: ${historyToSave[historyToSave.length - 1]?.role || 'none'})`);
+    } catch (error) {
+      console.error('[Marcel\'IA] Failed to save history:', error);
+    }
+  }
+
   resolveWebviewView(webviewView: vscode.WebviewView) {
     this.webviewView = webviewView;
 
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [this.extensionUri],
+      localResourceRoots: [this.context.extensionUri],
     };
+
+    // Load persisted history (async, non-blocking)
+    this.loadHistory().catch((err) => {
+      console.error('[Marcel\'IA] Failed to load history:', err);
+    });
 
     webviewView.webview.html = this.getHtml(webviewView.webview);
 
@@ -99,6 +190,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
         })
         .catch(() => {});
+    }
+
+    // Load persisted history after webview is ready (only once)
+    let historyLoaded = false;
+    webviewView.onDidChangeVisibility(() => {
+      if (webviewView.visible && !historyLoaded && this.history.length === 0) {
+        historyLoaded = true;
+        // Load history when webview becomes visible
+        setTimeout(() => {
+          this.loadHistory().catch((err) => {
+            console.error('[Marcel\'IA] Failed to load history:', err);
+          });
+        }, 500);
+      }
+    });
+    
+    // Also try to load immediately if webview is already visible
+    if (webviewView.visible && this.history.length === 0) {
+      setTimeout(() => {
+        this.loadHistory().catch((err) => {
+          console.error('[Marcel\'IA] Failed to load history:', err);
+        });
+      }, 500);
     }
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
@@ -116,6 +230,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'clearHistory':
           this.history = [];
+          this.saveHistory();
           break;
         case 'toolApproval': {
           const pending = this.pendingConfirmations.get(message.toolId);
@@ -132,6 +247,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
           break;
         }
+        case 'audioFileData': {
+          await this.handleAudioUpload(message.filename, message.data);
+          break;
+        }
       }
     });
   }
@@ -139,6 +258,37 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   async sendMessageToChat(text: string) {
     if (this.webviewView) {
       this.webviewView.webview.postMessage({ type: 'setInput', text });
+    }
+  }
+
+  private async handleAudioUpload(filename: string, data: number[]) {
+    try {
+      this.postToWebview({ type: 'transcriptionStatus', status: 'uploading', message: 'Envoi du fichier audio...' });
+
+      // Convert array to Buffer
+      const buffer = Buffer.from(data);
+
+      // Upload and transcribe
+      const result = await this.apiClient.uploadAudio(buffer, filename);
+      
+      this.postToWebview({ type: 'transcriptionStatus', status: 'success', message: 'Transcription terminée' });
+      
+      // Automatically send the transcription as a message
+      await this.handleUserMessage(result.transcription);
+      
+      // Reset audio button
+      setTimeout(() => {
+        this.postToWebview({ type: 'resetAudioButton' });
+      }, 500);
+    } catch (error: any) {
+      this.postToWebview({ 
+        type: 'transcriptionStatus', 
+        status: 'error', 
+        message: `Erreur: ${error.message || 'Échec de la transcription'}` 
+      });
+      setTimeout(() => {
+        this.postToWebview({ type: 'resetAudioButton' });
+      }, 2000);
     }
   }
 
@@ -174,6 +324,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     this.history.push({ role: 'user', content: processedText });
+    this.saveHistory();
 
     this.postToWebview({ type: 'userMessage', text });
     this.postToWebview({ type: 'assistantStart' });
@@ -373,6 +524,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
       }
       this.history.push({ role: 'assistant', content: assistantContent });
+      this.saveHistory();
 
       const toolResultBlocks: any[] = [];
       for (const toolCall of pendingToolCalls) {
@@ -386,6 +538,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
 
       this.history.push({ role: 'user', content: toolResultBlocks });
+      this.saveHistory();
       await this.streamWithToolLoop(systemPrompt, codebaseContext, round + 1);
     } else {
       let processedResponse = fullResponse;
@@ -395,6 +548,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // Plugin postprocessor error — use original response
       }
       this.history.push({ role: 'assistant', content: processedResponse });
+      this.saveHistory();
       this.postToWebview({ type: 'assistantDone' });
     }
   }
@@ -556,23 +710,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         case 'create_absolute_path_file': {
-          // Toujours demander confirmation pour les chemins absolus (sécurité)
-          const confirmed = await this.requestInlineConfirmation(
-            id,
-            `Créer ${input.create_as_directory ? 'dossier' : 'fichier'} à: ${input.absolute_path}`,
-          );
-          if (!confirmed) {
-            this.postToWebview({
-              type: 'toolStatus',
-              toolId: id,
-              status: 'denied',
-              label: `Refusé: ${input.absolute_path}`,
-            });
-            return {
-              toolCallId: id,
-              content: 'User denied the absolute path file/directory creation operation.',
-              isError: true,
-            };
+          // Demander confirmation selon la configuration (sécurité pour les chemins absolus)
+          let confirmed = true;
+          if (confirmLevel === 'always' || confirmLevel === 'write-only') {
+            confirmed = await this.requestInlineConfirmation(
+              id,
+              `Créer ${input.create_as_directory ? 'dossier' : 'fichier'} à: ${input.absolute_path}`,
+            );
+            if (!confirmed) {
+              this.postToWebview({
+                type: 'toolStatus',
+                toolId: id,
+                status: 'denied',
+                label: `Refusé: ${input.absolute_path}`,
+              });
+              return {
+                toolCallId: id,
+                content: 'User denied the absolute path file/directory creation operation.',
+                isError: true,
+              };
+            }
           }
 
           try {
@@ -650,23 +807,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         }
 
         case 'edit_absolute_path_file': {
-          // Toujours demander confirmation pour les modifications (sécurité)
-          const confirmed = await this.requestInlineConfirmation(
-            id,
-            `Modifier le fichier: ${input.absolute_path}`,
-          );
-          if (!confirmed) {
-            this.postToWebview({
-              type: 'toolStatus',
-              toolId: id,
-              status: 'denied',
-              label: `Refusé: ${input.absolute_path}`,
-            });
-            return {
-              toolCallId: id,
-              content: 'User denied the file edit operation.',
-              isError: true,
-            };
+          // Demander confirmation selon la configuration
+          let confirmed = true;
+          if (confirmLevel === 'always' || confirmLevel === 'write-only') {
+            confirmed = await this.requestInlineConfirmation(
+              id,
+              `Modifier le fichier: ${input.absolute_path}`,
+            );
+            if (!confirmed) {
+              this.postToWebview({
+                type: 'toolStatus',
+                toolId: id,
+                status: 'denied',
+                label: `Refusé: ${input.absolute_path}`,
+              });
+              return {
+                toolCallId: id,
+                content: 'User denied the file edit operation.',
+                isError: true,
+              };
+            }
           }
 
           try {
@@ -846,6 +1006,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       border-top: 1px solid var(--vscode-editorWidget-border);
       display: flex;
       gap: 8px;
+      align-items: center;
+      position: relative;
+      z-index: 1;
     }
     #message-input {
       flex: 1;
@@ -853,31 +1016,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       color: var(--vscode-input-foreground);
       border: 1px solid var(--vscode-input-border);
       border-radius: 4px;
-      padding: 8px;
+      padding: 10px 12px;
       font-family: inherit;
       font-size: inherit;
       resize: none;
-      min-height: 36px;
-      max-height: 120px;
+      min-height: 44px;
+      max-height: 150px;
+      line-height: 1.5;
+      pointer-events: auto;
     }
     #message-input:focus {
       outline: 1px solid var(--vscode-focusBorder);
     }
     #send-btn {
-      background: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
+      background: transparent;
       border: none;
-      border-radius: 4px;
-      padding: 8px 16px;
+      padding: 0;
       cursor: pointer;
-      font-size: inherit;
+      width: 0;
+      height: 0;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 10px solid var(--vscode-button-background);
+      align-self: flex-end;
+      margin-bottom: 8px;
+      transition: border-bottom-color 0.2s;
     }
     #send-btn:hover {
-      background: var(--vscode-button-hoverBackground);
+      border-bottom-color: var(--vscode-button-hoverBackground);
     }
     #send-btn:disabled {
       opacity: 0.5;
       cursor: not-allowed;
+      border-bottom-color: var(--vscode-button-background);
+    }
+    #audio-input {
+      display: none;
+    }
+    #audio-btn {
+      background: var(--vscode-button-secondaryBackground, transparent);
+      color: var(--vscode-button-secondaryForeground, var(--vscode-descriptionForeground));
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      cursor: pointer;
+      font-size: 1em;
+      align-self: center;
+      flex-shrink: 0;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
+    #audio-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground, var(--vscode-list-hoverBackground));
+      border-color: var(--vscode-focusBorder);
     }
     .toolbar {
       padding: 4px 12px;
@@ -885,15 +1075,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       justify-content: flex-end;
     }
     .toolbar button {
-      background: none;
+      background: transparent;
       border: none;
-      color: var(--vscode-descriptionForeground);
+      padding: 0;
       cursor: pointer;
-      font-size: 0.85em;
-      padding: 2px 8px;
+      width: 0;
+      height: 0;
+      border-right: 10px solid var(--vscode-descriptionForeground);
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      transition: border-right-color 0.2s;
     }
     .toolbar button:hover {
-      color: var(--vscode-foreground);
+      border-right-color: var(--vscode-foreground);
     }
     .error-msg {
       color: var(--vscode-errorForeground);
@@ -1078,13 +1272,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   </div>
   <div class="app-content ${appContentClass}" id="app-content">
     <div class="toolbar">
-      <button id="clear-btn" title="Effacer l'historique">Effacer</button>
+      <button id="clear-btn" title="Effacer l'historique"></button>
     </div>
     <div id="workspace-info"></div>
     <div id="chat-container"></div>
     <div id="input-container">
+      <input type="file" id="audio-input" accept="audio/*" />
+      <button id="audio-btn" title="Transcrire un fichier audio">🎤</button>
       <textarea id="message-input" placeholder="Posez une question... (/test, /doc, /review, /explain)" rows="1"></textarea>
-      <button id="send-btn">Envoyer</button>
+      <button id="send-btn" title="Envoyer"></button>
     </div>
   </div>
   <script nonce="${nonce}">
@@ -1093,6 +1289,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
     const clearBtn = document.getElementById('clear-btn');
+    const audioBtn = document.getElementById('audio-btn');
+    const audioInput = document.getElementById('audio-input');
     const loginScreen = document.getElementById('login-screen');
     const appContent = document.getElementById('app-content');
     const loginBtn = document.getElementById('login-btn');
@@ -1192,11 +1390,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const h2 = line.match(/^## (.+)/);
         const h1 = line.match(/^# (.+)/);
         const li = line.match(/^[-*] (.+)/);
-        const oli = line.match(/^\\d+\\. (.+)/);
+        const oli = line.match(/^(\\d+)\\. (.+)/);
 
-        if (listTag && !li && !oli) {
-          html += '</' + listTag + '>';
-          listTag = '';
+        // Close list if switching from one list type to another or to non-list
+        if (listTag) {
+          if (li && listTag !== 'ul') {
+            html += '</' + listTag + '>';
+            listTag = '';
+          } else if (oli && listTag !== 'ol') {
+            html += '</' + listTag + '>';
+            listTag = '';
+          } else if (!li && !oli) {
+            html += '</' + listTag + '>';
+            listTag = '';
+          }
         }
 
         if (h3) {
@@ -1210,7 +1417,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           html += '<li>' + inlineFormat(escapeHtml(li[1])) + '</li>';
         } else if (oli) {
           if (!listTag) { html += '<ol>'; listTag = 'ol'; }
-          html += '<li>' + inlineFormat(escapeHtml(oli[1])) + '</li>';
+          html += '<li>' + inlineFormat(escapeHtml(oli[2])) + '</li>';
         } else if (line.trim() === '') {
           html += '<br>';
         } else {
@@ -1300,6 +1507,40 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     sendBtn.addEventListener('click', sendMessage);
+    
+    if (audioBtn && audioInput) {
+    audioBtn.addEventListener('click', () => {
+      audioInput.click();
+    });
+    
+    audioInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      
+      // Show loading state
+      audioBtn.disabled = true;
+      audioBtn.textContent = '⏳';
+      
+      try {
+        vscode.postMessage({ type: 'uploadAudio', file: { name: file.name, size: file.size } });
+        
+        // Read file as ArrayBuffer and send to extension
+        const arrayBuffer = await file.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        vscode.postMessage({ 
+          type: 'audioFileData', 
+          filename: file.name,
+          data: Array.from(uint8Array)
+        });
+      } catch (error) {
+        console.error('Error reading audio file:', error);
+        audioBtn.disabled = false;
+        audioBtn.textContent = '🎤';
+      }
+    });
+    } // end if (audioBtn && audioInput)
+    
     messageInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -1472,6 +1713,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'hideLoginScreen':
           loginScreen.classList.remove('visible');
           appContent.classList.remove('hidden');
+          break;
+        case 'transcriptionStatus':
+          if (msg.status === 'uploading') {
+            audioBtn.disabled = true;
+            audioBtn.textContent = '⏳';
+            audioBtn.title = msg.message || 'Transcription en cours...';
+          } else if (msg.status === 'success') {
+            audioBtn.textContent = '✓';
+            audioBtn.title = msg.message || 'Transcription réussie';
+          } else if (msg.status === 'error') {
+            audioBtn.textContent = '❌';
+            audioBtn.title = msg.message || 'Erreur de transcription';
+          }
+          break;
+        case 'resetAudioButton':
+          audioBtn.disabled = false;
+          audioBtn.textContent = '🎤';
+          audioBtn.title = 'Transcrire un fichier audio';
+          // Reset file input
+          if (audioInput) {
+            audioInput.value = '';
+          }
+          break;
+        case 'scrollToBottom':
+          chatContainer.scrollTop = chatContainer.scrollHeight;
           break;
       }
     });
