@@ -22,16 +22,15 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
     logger.info({ filename, size: audioBuffer.length }, 'Transcribing audio file');
 
     // Create a File object from the buffer
-    // In Node.js 18+, File is available globally
-    // For older versions, we'll use a Blob which OpenAI SDK also accepts
+    // Uint8Array is used so TypeScript accepts it as BlobPart (Buffer has ArrayBufferLike which is not assignable to BlobPart)
+    const part = new Uint8Array(audioBuffer);
     let file: File | Blob;
     if (typeof File !== 'undefined' && File.prototype.constructor) {
-      file = new File([audioBuffer], filename, {
+      file = new File([part], filename, {
         type: getMimeType(filename),
       });
     } else {
-      // Fallback: use Blob (available in Node.js)
-      file = new Blob([audioBuffer], { type: getMimeType(filename) });
+      file = new Blob([part], { type: getMimeType(filename) });
     }
 
     const transcription = await openai.audio.transcriptions.create({
