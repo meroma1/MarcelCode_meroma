@@ -101,7 +101,7 @@
         "marcelia.proxyUrl": {
           "type": "string",
           "default": "http://localhost:3000",
-          "description": "URL du serveur proxy Marcel'IA"
+          "description": "URL du serveur proxy Marcel'IA (peut être un serveur distant, ex: https://marcelia.votre-domaine.com)"
         },
         "marcelia.completionEnabled": {
           "type": "boolean",

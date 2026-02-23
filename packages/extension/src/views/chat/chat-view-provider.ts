@@ -34,6 +34,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private pendingConfirmations: Map<string, { resolve: (approved: boolean) => void }> = new Map();
   private streamedToolPaths: Map<string, string> = new Map();
   private readonly HISTORY_KEY = 'marcelia.chat.history';
+  private contextDisabled: boolean = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -172,12 +173,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [this.context.extensionUri],
     };
 
+    webviewView.webview.html = this.getHtml(webviewView.webview);
+
     // Load persisted history (async, non-blocking)
     this.loadHistory().catch((err) => {
       console.error('[Marcel\'IA] Failed to load history:', err);
     });
 
-    webviewView.webview.html = this.getHtml(webviewView.webview);
+    // Initialize context status after webview is ready
+    setTimeout(() => {
+      this.postToWebview({ 
+        type: 'contextStatus', 
+        disabled: this.contextDisabled 
+      });
+    }, 100);
+
+    // Initialize context status after webview is ready
+    setTimeout(() => {
+      this.postToWebview({ 
+        type: 'contextStatus', 
+        disabled: this.contextDisabled 
+      });
+    }, 100);
 
     // Proactively check auth on webview init (non-blocking)
     const isDevMode = vscode.workspace.getConfiguration('marcelia').get('devMode', false);
@@ -231,6 +248,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'clearHistory':
           this.history = [];
           this.saveHistory();
+          break;
+        case 'clearContext':
+          this.contextDisabled = !this.contextDisabled;
+          this.postToWebview({ 
+            type: 'contextStatus', 
+            disabled: this.contextDisabled 
+          });
+          if (this.contextDisabled) {
+            this.postToWebview({
+              type: 'workspaceInfo',
+              text: 'Contexte du workspace désactivé',
+            });
+          } else {
+            // Re-enable context - refresh workspace info
+            const config = vscode.workspace.getConfiguration('marcelia');
+            const workspaceEnabled = config.get<boolean>('workspaceContextEnabled', true);
+            if (workspaceEnabled) {
+              const treeCtx = await this.workspaceScanner.getFileTree();
+              if (treeCtx) {
+                this.postToWebview({
+                  type: 'workspaceInfo',
+                  text: `Workspace: ${treeCtx.rootName} (${treeCtx.totalFiles} fichiers)`,
+                });
+              }
+            }
+          }
           break;
         case 'toolApproval': {
           const pending = this.pendingConfirmations.get(message.toolId);
@@ -334,7 +377,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const workspaceEnabled = config.get<boolean>('workspaceContextEnabled', true);
       let codebaseContext: any = undefined;
 
-      if (workspaceEnabled) {
+      if (workspaceEnabled && !this.contextDisabled) {
         const treeCtx = await this.workspaceScanner.getFileTree();
         if (treeCtx) {
           const activeFiles: Array<{ path: string; language: string; content: string }> = [];
@@ -1073,12 +1116,31 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       padding: 4px 12px;
       display: flex;
       justify-content: flex-end;
+      gap: 8px;
     }
     .toolbar button {
       background: transparent;
       border: none;
       padding: 0;
       cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    #clear-context-btn {
+      width: 0;
+      height: 0;
+      border-right: 10px solid var(--vscode-descriptionForeground);
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      transition: border-right-color 0.2s, opacity 0.2s;
+    }
+    #clear-context-btn:hover {
+      border-right-color: var(--vscode-foreground);
+    }
+    #clear-context-btn.disabled {
+      opacity: 0.4;
+      border-right-color: var(--vscode-errorForeground, #f48771);
+    }
+    #clear-btn {
       width: 0;
       height: 0;
       border-right: 10px solid var(--vscode-descriptionForeground);
@@ -1086,7 +1148,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       border-bottom: 7px solid transparent;
       transition: border-right-color 0.2s;
     }
-    .toolbar button:hover {
+    #clear-btn:hover {
       border-right-color: var(--vscode-foreground);
     }
     .error-msg {
@@ -1272,6 +1334,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   </div>
   <div class="app-content ${appContentClass}" id="app-content">
     <div class="toolbar">
+      <button id="clear-context-btn" title="Désactiver/Réactiver le contexte du workspace">📁</button>
       <button id="clear-btn" title="Effacer l'historique"></button>
     </div>
     <div id="workspace-info"></div>
@@ -1289,6 +1352,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const messageInput = document.getElementById('message-input');
     const sendBtn = document.getElementById('send-btn');
     const clearBtn = document.getElementById('clear-btn');
+    const clearContextBtn = document.getElementById('clear-context-btn');
     const audioBtn = document.getElementById('audio-btn');
     const audioInput = document.getElementById('audio-input');
     const loginScreen = document.getElementById('login-screen');
@@ -1557,6 +1621,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       vscode.postMessage({ type: 'clearHistory' });
     });
 
+    clearContextBtn.addEventListener('click', () => {
+      vscode.postMessage({ type: 'clearContext' });
+    });
+
     window.addEventListener('message', (event) => {
       const msg = event.data;
       switch (msg.type) {
@@ -1738,6 +1806,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'scrollToBottom':
           chatContainer.scrollTop = chatContainer.scrollHeight;
+          break;
+        case 'contextStatus':
+          if (clearContextBtn) {
+            if (msg.disabled) {
+              clearContextBtn.classList.add('disabled');
+              clearContextBtn.title = 'Contexte désactivé - Cliquez pour réactiver';
+            } else {
+              clearContextBtn.classList.remove('disabled');
+              clearContextBtn.title = 'Désactiver/Réactiver le contexte du workspace';
+            }
+          }
           break;
       }
     });

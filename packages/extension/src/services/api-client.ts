@@ -84,9 +84,16 @@ export class ApiClient {
     } catch (err: any) {
       const msg = err?.message || String(err);
       if (msg === 'fetch failed' || msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
-        throw new Error(
-          `Impossible de contacter le serveur Marcel'IA (${this.baseUrl}). Vérifiez que Docker est démarré et que le proxy tourne : docker-compose -f docker-compose.dev.yml up -d`
-        );
+        const devMode = vscode.workspace.getConfiguration('marcelia').get('devMode', false);
+        if (devMode) {
+          throw new Error(
+            `Impossible de contacter le serveur Marcel'IA (${this.baseUrl}). Vérifiez que Docker est démarré et que le proxy tourne : docker-compose -f docker-compose.dev.yml up -d`
+          );
+        } else {
+          throw new Error(
+            `Impossible de contacter le serveur Marcel'IA (${this.baseUrl}). Vérifiez que le serveur proxy est accessible et que l'URL est correcte dans les paramètres VS Code (Marcel'IA: Proxy Url).`
+          );
+        }
       }
       throw err;
     }
