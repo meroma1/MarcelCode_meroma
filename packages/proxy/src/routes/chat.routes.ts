@@ -206,7 +206,7 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
     const startTime = Date.now();
 
     // Build messages — content can be string (text) or array (tool_use/tool_result blocks)
-    const messages: Array<{ role: string; content: any }> = body.messages.map(m => ({
+    const messages: Array<{ role: string; content: unknown }> = body.messages.map((m: { role: string; content: unknown }) => ({
       role: m.role,
       content: m.content,
     }));

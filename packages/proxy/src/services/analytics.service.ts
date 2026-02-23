@@ -50,9 +50,9 @@ export async function getUsageByTeam(
   return {
     period: `${startDate.toISOString()} - ${endDate.toISOString()}`,
     totalRequests: logs.length,
-    totalTokens: logs.reduce((s, l) => s + l.totalTokens, 0),
-    totalInputTokens: logs.reduce((s, l) => s + l.inputTokens, 0),
-    totalOutputTokens: logs.reduce((s, l) => s + l.outputTokens, 0),
+    totalTokens: logs.reduce((s: number, l: { totalTokens: number }) => s + l.totalTokens, 0),
+    totalInputTokens: logs.reduce((s: number, l: { inputTokens: number }) => s + l.inputTokens, 0),
+    totalOutputTokens: logs.reduce((s: number, l: { outputTokens: number }) => s + l.outputTokens, 0),
     avgLatencyMs: logs.length > 0 ? Math.round(totalLatency / logs.length) : 0,
     cachedRequests: cachedCount,
     byModel,
@@ -98,9 +98,9 @@ export async function getUsageByUser(
   return {
     period: `${startDate.toISOString()} - ${endDate.toISOString()}`,
     totalRequests: logs.length,
-    totalTokens: logs.reduce((s, l) => s + l.totalTokens, 0),
-    totalInputTokens: logs.reduce((s, l) => s + l.inputTokens, 0),
-    totalOutputTokens: logs.reduce((s, l) => s + l.outputTokens, 0),
+    totalTokens: logs.reduce((s: number, l: { totalTokens: number }) => s + l.totalTokens, 0),
+    totalInputTokens: logs.reduce((s: number, l: { inputTokens: number }) => s + l.inputTokens, 0),
+    totalOutputTokens: logs.reduce((s: number, l: { outputTokens: number }) => s + l.outputTokens, 0),
     avgLatencyMs: logs.length > 0 ? Math.round(totalLatency / logs.length) : 0,
     cachedRequests: cachedCount,
     byModel,
@@ -127,7 +127,7 @@ export async function getTopUsers(
     take: limit,
   });
 
-  return users.map((u) => ({
+  return users.map((u: { userId: string; _sum: { totalTokens: number | null }; _count: number }) => ({
     userId: u.userId,
     totalTokens: u._sum.totalTokens || 0,
     requestCount: u._count,

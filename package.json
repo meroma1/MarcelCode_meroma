@@ -11,7 +11,7 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "build:shared": "npm run build -w packages/shared",
-    "build:proxy": "npm run build -w packages/proxy",
+    "build:proxy": "npm run build -w packages/shared && npx prisma generate --schema=packages/proxy/src/prisma/schema.prisma && npm run build -w packages/proxy",
     "build:extension": "npm run build -w packages/extension",
     "dev:proxy": "npm run dev -w packages/proxy",
     "lint": "eslint 'packages/*/src/**/*.ts'",
