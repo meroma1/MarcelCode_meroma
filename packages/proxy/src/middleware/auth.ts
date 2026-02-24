@@ -18,21 +18,25 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
   // When REQUIRE_AUTH=false, allow requests without token (dev or production)
   if (!env.REQUIRE_AUTH && !authHeader) {
-    const prisma = getPrisma();
-    const devUser = await prisma.user.findFirst({ where: { role: 'admin' } });
-    if (devUser) {
-      (req as any).user = {
-        id: devUser.id,
-        email: devUser.email,
-        displayName: devUser.displayName,
-        role: devUser.role as UserRole,
-        teamId: devUser.teamId,
-        entraObjectId: devUser.entraObjectId,
-      } satisfies AuthenticatedUser;
-      logger.debug({ userId: devUser.id }, 'Auth bypass (REQUIRE_AUTH=false)');
-      return next();
+    try {
+      const prisma = getPrisma();
+      const devUser = await prisma.user.findFirst({ where: { role: 'admin' } });
+      if (devUser) {
+        (req as any).user = {
+          id: devUser.id,
+          email: devUser.email,
+          displayName: devUser.displayName,
+          role: devUser.role as UserRole,
+          teamId: devUser.teamId,
+          entraObjectId: devUser.entraObjectId,
+        } satisfies AuthenticatedUser;
+        logger.debug({ userId: devUser.id }, 'Auth bypass (REQUIRE_AUTH=false)');
+        return next();
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Auth bypass: DB unreachable, using anonymous user');
     }
-    // No admin user in DB: use a minimal anonymous user so routes don't break
+    // No admin user or DB unreachable: use anonymous user so routes don't break
     (req as any).user = {
       id: 'anonymous',
       email: 'anonymous@local',
@@ -41,7 +45,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       teamId: null,
       entraObjectId: 'anonymous',
     } satisfies AuthenticatedUser;
-    logger.debug('Auth bypass with anonymous user (REQUIRE_AUTH=false, no admin in DB)');
+    logger.debug('Auth bypass with anonymous user (REQUIRE_AUTH=false)');
     return next();
   }
 
