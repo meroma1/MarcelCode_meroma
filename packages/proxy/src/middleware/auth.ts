@@ -14,9 +14,10 @@ function getJwks() {
 }
 
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
-  // Dev-mode bypass: use seeded admin user when no token is provided
-  // REQUIRE_AUTH=true forces auth even in dev mode
-  if (env.NODE_ENV === 'development' && !env.REQUIRE_AUTH && !req.headers.authorization) {
+  const authHeader = req.headers.authorization;
+
+  // When REQUIRE_AUTH=false, allow requests without token (dev or production)
+  if (!env.REQUIRE_AUTH && !authHeader) {
     const prisma = getPrisma();
     const devUser = await prisma.user.findFirst({ where: { role: 'admin' } });
     if (devUser) {
@@ -28,12 +29,21 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
         teamId: devUser.teamId,
         entraObjectId: devUser.entraObjectId,
       } satisfies AuthenticatedUser;
-      logger.debug({ userId: devUser.id }, 'Dev-mode auth bypass');
+      logger.debug({ userId: devUser.id }, 'Auth bypass (REQUIRE_AUTH=false)');
       return next();
     }
+    // No admin user in DB: use a minimal anonymous user so routes don't break
+    (req as any).user = {
+      id: 'anonymous',
+      email: 'anonymous@local',
+      displayName: 'Anonymous',
+      role: 'developer' as UserRole,
+      teamId: null,
+      entraObjectId: 'anonymous',
+    } satisfies AuthenticatedUser;
+    logger.debug('Auth bypass with anonymous user (REQUIRE_AUTH=false, no admin in DB)');
+    return next();
   }
-
-  const authHeader = req.headers.authorization;
 
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({
