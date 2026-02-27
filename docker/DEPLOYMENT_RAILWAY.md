@@ -58,9 +58,11 @@ Suivez les étapes dans l’ordre. Comptez environ 10–15 minutes.
 
 ---
 
-### Étape 4 : Configurer le service proxy (celui déployé depuis GitHub)
+### Étape 4 : Configurer le service proxy (celui qui exécute l’API)
 
-1. Cliquez sur le **service qui vient du dépôt** (souvent nommé comme votre repo, ex. **MarcelCode_meroma**), pas sur Postgres ni Redis.
+**Important** : Vous pouvez avoir **plusieurs** services déployés depuis le même dépôt (ex. **marcelia-vscode** et **marcelia/proxy**). Les variables (DATABASE_URL, REDIS_URL, ANTHROPIC_API_KEY, RAILPACK_BUILD_CMD, etc.) et le domaine doivent être configurés sur le **service qui exécute le proxy** — en général **marcelia/proxy** (ou le service dont le déploiement échouait avec « @marcelia/shared »). **Pas** sur marcelia-vscode.
+
+1. Cliquez sur le **service proxy** : **marcelia/proxy** (ou le service dont le build doit lancer l’API sur le port 3000). Ne pas configurer **marcelia-vscode** pour ces variables.
 2. Allez dans l’onglet **« Variables »** (parfois dans le panneau de droite ou sous **Settings** selon la vue).
 
 **Si l’onglet Variables est vide** : c’est normal. Il n’y a rien tant que vous n’ajoutez pas de variables. Cherchez l’un de ces éléments sur la page :
@@ -87,7 +89,7 @@ En bas ou en haut de la liste (même vide), vous devriez voir une de ces actions
 
 ### Étape 5 : Ajouter les autres variables d’environnement
 
-Toujours dans **Variables** du **service proxy**, ajoutez :
+Toujours dans **Variables** du **service marcelia/proxy** (pas marcelia-vscode), ajoutez :
 
 | Variable | Valeur | Obligatoire |
 |----------|--------|-------------|
@@ -109,9 +111,11 @@ Si vous utilisez **Azure AD** (`REQUIRE_AUTH=true`), ajoutez aussi :
 |----------|-------------------|-------------|
 | `DATABASE_URL` | **Référence** au service PostgreSQL (étape 4) — ne pas copier depuis votre `.env` | Oui |
 | `REDIS_URL` | **Référence** au service Redis (étape 4) — ne pas copier depuis votre `.env` | Oui |
-| `RAILWAY_DOCKERFILE_PATH` | Valeur : `packages/proxy/Dockerfile` | Oui |
+| `RAILWAY_DOCKERFILE_PATH` | Valeur : `packages/proxy/Dockerfile` (pour forcer le Dockerfile au lieu de Railpack) | Recommandé |
+| `RAILPACK_BUILD_CMD` | Si Railway utilise **Railpack** (pas le Dockerfile), ajoutez cette variable pour forcer l’ordre de build : `npm run build -w packages/shared && npx prisma generate --schema=packages/proxy/src/prisma/schema.prisma && npm run build -w packages/proxy` | Oui si pas de Dockerfile |
 | `ANTHROPIC_API_KEY` | Copier depuis votre `.env` (votre clé `sk-ant-...`) | Oui |
 | `OPENAI_API_KEY` | Copier depuis votre `.env` ou laisser vide | Non |
+| `PORT` | `3000` (pour que le proxy écoute sur 3000 et que le domaine configuré sur 3000 réponde ; sinon Railway utilise 8080) | Recommandé |
 | `NODE_ENV` | `production` | Recommandé |
 | `CORS_ORIGIN` | Copier depuis votre `.env` (ex. `*` ou votre domaine) | Oui |
 | `REQUIRE_AUTH` | Copier depuis votre `.env` (ex. `false`) | Oui |
@@ -131,7 +135,8 @@ En résumé : **d’abord** ajouter `DATABASE_URL` et `REDIS_URL` en **référen
 2. Descendez jusqu’à la section **« Réseautage »** (ou **Networking** / **Public Networking**).
 3. **Ne pas cliquer sur « + Proxy TCP »** : ce bouton expose en TCP brut, pas en HTTP. Pour Marcel'IA il faut un domaine HTTP.
 4. Cliquez sur **« Générer le domaine »** (ou **Generate Domain** / **Add domain** selon la langue).
-5. Si Railway demande un **port** : saisir **3000** (le proxy Marcel'IA écoute sur le port 3000).
+5. Si Railway demande un **port** pour le domaine : saisir **3000** (si vous avez défini `PORT=3000` dans les variables du service, voir ci‑dessous). Sinon, vérifiez dans les logs d’exécution (« Marcel'IA Proxy running on port X ») et indiquez ce port (ex. 8080).
+6. **Pour que le proxy écoute sur 3000** (et que le domaine sur 3000 fonctionne) : dans **Variables** du service proxy, ajoutez **`PORT`** = **`3000`**. Sinon Railway injecte souvent **8080** et le proxy écoute sur 8080 ; le domaine configuré sur 3000 ne recevrait alors rien.
 6. **Après avoir cliqué** : Railway affiche **« Le domaine public sera généré »**. C’est normal — le domaine est en cours de création. Attendez quelques secondes, puis :
    - **Rafraîchir la page** (F5) et retourner dans **Settings** → **Networking** : une ligne avec le domaine (ex. `xxx.up.railway.app`) peut apparaître dans la liste des domaines.
    - Ou aller dans l’onglet **Variables** du même service et chercher **`RAILWAY_PUBLIC_DOMAIN`** : la valeur est la partie domaine de l’URL ; l’URL complète est **`https://`** + cette valeur.
@@ -155,13 +160,12 @@ En résumé : **d’abord** ajouter `DATABASE_URL` et `REDIS_URL` en **référen
      ```bash
      npx prisma migrate deploy --schema=packages/proxy/src/prisma/schema.prisma
      ```
-   - **Option B** : En local, à la racine du repo, avec la **même** `DATABASE_URL` que Railway (copiez-la depuis le service PostgreSQL → Variables) :
-     ```bash
+   - **Option B** : En local, à la racine du repo. Il faut utiliser l’**URL publique** de la base (pas `postgres.railway.internal`, inaccessible depuis votre PC). Sur Railway : service **PostgreSQL** → **Settings** → **Réseautage** → **+ Proxy TCP** (port **5432**) pour exposer la base. Puis dans **Variables** du service Postgres, copiez **`DATABASE_PUBLIC_URL`** (ou construisez l’URL avec le domaine/port du TCP proxy). Dans PowerShell (même session) :
+     ```powershell
      cd c:\Users\romeongbe\Documents\GitHub\MarcelCode_meroma
-     set DATABASE_URL=postgresql://...   # coller l’URL depuis Railway
+     $env:DATABASE_URL = "postgresql://user:pass@VOTRE_DOMAINE.proxy.rlwy.net:PORT_PROXY/railway"   # ex. metro.proxy.rlwy.net:54884 (port proxy, pas 5432)
      npx prisma migrate deploy --schema=packages/proxy/src/prisma/schema.prisma
      ```
-     (Sous PowerShell : `$env:DATABASE_URL="postgresql://..."; npx prisma migrate deploy --schema=packages/proxy/src/prisma/schema.prisma`)
 
 ---
 
@@ -176,7 +180,12 @@ En résumé : **d’abord** ajouter `DATABASE_URL` et `REDIS_URL` en **référen
 
 ## En cas de problème
 
-- **« Impossible de trouver le module '@marcelia/shared' »** (sur Railway) : Railway utilise **Railpack** et ne build que le proxy, sans builder **shared** avant. Le dépôt contient maintenant un fichier **`railpack.json`** à la racine qui impose l’ordre : build shared → prisma generate → build proxy. **Faites un commit + push** (fichiers `railpack.json` et éventuellement `package.json` avec `build:proxy` mis à jour), puis **Redeploy**. Si vous utilisiez un Dockerfile (`RAILWAY_DOCKERFILE_PATH`), vérifiez aussi que **Root Directory** est vide (racine du dépôt).
+- **Variables dans le mauvais service** : Si vos variables (DATABASE_URL, ANTHROPIC_API_KEY, etc.) sont dans **marcelia-vscode** au lieu de **marcelia/proxy**, le proxy ne les reçoit pas. Ouvrez le service **marcelia/proxy**, onglet **Variables**, et ajoutez-y toutes les variables (références Postgres/Redis, clés API, RAILPACK_BUILD_CMD, etc.). Puis **Redeploy** le service **marcelia/proxy**.
+- **« Impossible de trouver le module '@marcelia/shared' »** (sur Railway) : Railway utilise **Railpack** et ne build que le proxy. Vérifiez d’abord que vous configurez le service **marcelia/proxy** (pas marcelia-vscode). Puis faire **l’un** des deux :
+  1. **Forcer la commande de build** : dans **Variables** du service proxy, ajoutez **`RAILPACK_BUILD_CMD`** avec la valeur exacte :  
+     `npm run build -w packages/shared && npx prisma generate --schema=packages/proxy/src/prisma/schema.prisma && npm run build -w packages/proxy`  
+     Enregistrez puis **Redeploy**.
+  2. **Ou forcer le Dockerfile** : ajoutez **`RAILWAY_DOCKERFILE_PATH`** = **`packages/proxy/Dockerfile`**, assurez-vous que **Root Directory** est **vide** (racine du dépôt), puis **Redeploy**. Le Dockerfile build shared puis proxy dans le bon ordre.
 - **Déploiement a échoué** : le domaine peut déjà s’afficher, mais l’app ne répond pas tant qu’un déploiement n’a pas réussi. Ouvrez l’onglet **Deployments** du service proxy, cliquez sur le déploiement en échec, puis **View logs** (ou **Logs**). Causes fréquentes :
   - **Build** : `RAILWAY_DOCKERFILE_PATH=packages/proxy/Dockerfile` absent ou mal orthographié ; **Root Directory doit rester vide** (racine du repo).
   - **Runtime** : `DATABASE_URL` ou `REDIS_URL` manquant ou incorrect — doivent être des **références** aux services PostgreSQL et Redis.
@@ -185,6 +194,10 @@ En résumé : **d’abord** ajouter `DATABASE_URL` et `REDIS_URL` en **référen
 - **Erreur de connexion à la base** : vérifiez que `DATABASE_URL` est bien une **reference** au service PostgreSQL (pas une chaîne saisie à la main).
 - **Erreur Redis** : idem, `REDIS_URL` doit référencer le service Redis. Si Railway expose `REDIS_PRIVATE_URL`, référencez celle-ci mais nommez la variable `REDIS_URL` dans le proxy.
 - **502 / Service Unavailable** : attendez 1–2 min après le déploiement ; si ça persiste, consultez les **logs** du service proxy (onglet **Deployments** → clic sur le déploiement → **View logs**).
+- **L’application ne répond pas** (timeout, rien dans le navigateur ou dans VS Code) :
+  1. **Railway** : service **marcelia/proxy** → **Deployments** → dernier déploiement → **Logs**. Ne pas s’arrêter aux logs de **build** ; faire défiler jusqu’aux logs **après** le déploiement (exécution du conteneur). Vérifier que le serveur a bien démarré (« Marcel'IA Proxy running on port … ») et qu’il n’y a pas d’erreur au démarrage (connexion Redis/Postgres, ANTHROPIC_API_KEY manquante, etc.).
+  2. **Navigateur** : ouvrir **`https://votre-url/health`**. Si timeout ou 502 → le conteneur a peut‑être crashé (voir les logs). Si 401 → auth activée (vérifier CORS et auth).
+  3. **VS Code** : **Marcel'IA: Proxy Url** doit être exactement l’URL du proxy (ex. `https://marceliaproxy-production.up.railway.app`), sans slash final, en **https**. Vérifier aussi **Marcel'IA: Dev Mode** si vous n’utilisez pas l’auth Azure.
 
 ---
 
