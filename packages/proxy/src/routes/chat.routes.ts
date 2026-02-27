@@ -68,6 +68,27 @@ const WORKSPACE_TOOLS = [
     },
   },
   {
+    name: 'run_workspace_command',
+    description:
+      'Execute a command in the current workspace. Use this to run project commands like "npm run dev", "npm test", "python main.py", "mvn spring-boot:run", etc. ALWAYS ask the user for confirmation in natural language before calling this tool, clearly showing the full command and working directory. This tool only runs commands inside the workspace (never absolute paths).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        command: {
+          type: 'string',
+          description:
+            'Shell command to run, exactly as you would type it in a terminal (e.g. "npm run dev"). Do NOT include dangerous operations like rm -rf.',
+        },
+        cwd: {
+          type: 'string',
+          description:
+            'Optional working directory, relative to the workspace root (e.g. "packages/api"). If omitted, the command runs at the workspace root.',
+        },
+      },
+      required: ['command'],
+    },
+  },
+  {
     name: 'create_absolute_path_file',
     description: 'Create a file or directory at an absolute path on the filesystem (outside the workspace). Use this tool when the user asks to create files or folders anywhere on their computer, including on drive C: or other locations. The directory path will be created automatically if it does not exist. This tool can create files and folders outside the VS Code workspace. You can call this tool multiple times in sequence to create a complete project structure with multiple directories and files.',
     input_schema: {
@@ -172,6 +193,8 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
       }
       contextSection += '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet, crée d\'abord la structure de dossiers, puis les fichiers un par un.';
 
+      contextSection += '\n\nEXÉCUTION DE PROJET: Tu peux LANCER et EXÉCUTER des projets dans le workspace. Quand l\'utilisateur demande de "lancer", "exécuter", "démarrer" ou "run" le projet (ou un script comme les tests), utilise l\'outil run_workspace_command. Tu n\'es pas seulement un générateur de code : tu peux exécuter des commandes. Étapes : 1) Lis le package.json (ou pyproject.toml, pom.xml, etc.) pour déterminer la commande (ex: npm run dev, npm start, python main.py, mvn spring-boot:run). 2) Propose la commande à l\'utilisateur et demande confirmation. 3) Appelle run_workspace_command avec les paramètres command et éventuellement cwd (sous-dossier si pertinent). Ne refuse jamais en disant que tu es "générateur pas exécuteur" : tu as l\'outil run_workspace_command pour exécuter.';
+
       systemPrompt = systemPrompt
         ? `${systemPrompt}\n\n${contextSection}`
         : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.\n${contextSection}`;
@@ -183,9 +206,10 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
       const editInfo = '\n- edit_absolute_path_file : pour MODIFIER un fichier existant';
       const usageInfo = '\n\nQuand l\'utilisateur mentionne un chemin absolu (commençant par C:\\, D:\\, etc.) ou demande d\'expliquer/modifier un fichier, utilise IMMÉDIATEMENT read_absolute_path_file pour lire le fichier, puis explique ou modifie selon la demande. Ne demande JAMAIS à l\'utilisateur de copier-coller le code - tu peux le lire toi-même !';
       const projectInfo = '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet dans un langage donné, crée d\'abord la structure de dossiers, puis les fichiers nécessaires (package.json, README.md, fichiers sources, etc.) un par un.';
+      const execInfo = '\n\nEXÉCUTION DE PROJET: Tu peux exécuter des commandes (lancer un projet, démarrer un serveur, lancer les tests) avec l\'outil run_workspace_command. Si l\'utilisateur demande de lancer/exécuter un projet, propose une commande puis demande confirmation avant d\'appeler run_workspace_command. Si aucun workspace n\'est ouvert, demande à l\'utilisateur d\'ouvrir un dossier dans VS Code.';
       systemPrompt = systemPrompt
-        ? `${systemPrompt}${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}`
-        : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}`;
+        ? `${systemPrompt}${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}${execInfo}`
+        : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}${execInfo}`;
     }
 
     // Apply plugin prompt extensions
@@ -229,19 +253,22 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
         const allPluginTools = [...proxyPluginTools, ...clientPluginTools];
         
         // Always include absolute path tools (works outside workspace)
-        const absolutePathTools = WORKSPACE_TOOLS.filter(t => 
+        const absolutePathTools = WORKSPACE_TOOLS.filter(t =>
           t.name === 'create_absolute_path_file' || 
           t.name === 'read_absolute_path_file' || 
           t.name === 'edit_absolute_path_file'
         );
+        // Also include execution tool even when workspace context is not attached
+        const execTools = WORKSPACE_TOOLS.filter((t) => t.name === 'run_workspace_command');
         
         let tools;
         if (hasWorkspace) {
           tools = [...WORKSPACE_TOOLS, ...allPluginTools];
         } else {
-          // Even without workspace, include absolute path tools
-          tools = absolutePathTools.length > 0 || allPluginTools.length > 0 
-            ? [...absolutePathTools, ...allPluginTools] 
+          // Even without workspace, include absolute path tools + run tool
+          const alwaysTools = [...absolutePathTools, ...execTools];
+          tools = alwaysTools.length > 0 || allPluginTools.length > 0
+            ? [...alwaysTools, ...allPluginTools]
             : undefined;
         }
         
