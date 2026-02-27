@@ -100,7 +100,7 @@
       "properties": {
         "marcelia.proxyUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
+          "default": "https://marceliaproxy-production.up.railway.app",
           "description": "URL du serveur proxy Marcel'IA (peut être un serveur distant, ex: https://marcelia.votre-domaine.com)"
         },
         "marcelia.completionEnabled": {
@@ -125,7 +125,11 @@
         },
         "marcelia.toolConfirmation": {
           "type": "string",
-          "enum": ["always", "write-only", "never"],
+          "enum": [
+            "always",
+            "write-only",
+            "never"
+          ],
           "default": "write-only",
           "description": "Quand demander confirmation pour les opérations fichiers (always = toujours, write-only = écriture/modification seulement, never = automatique)"
         },
@@ -150,7 +154,9 @@
     "build": "webpack --mode production",
     "dev": "webpack --mode development --watch",
     "package": "vsce package",
+    "prepackage:vsix": "node scripts/patch-proxy-url.js --save",
     "package:vsix": "npm run build && vsce package --out marcelia.vsix --allow-package-secrets openai --no-dependencies",
+    "postpackage:vsix": "node scripts/patch-proxy-url.js --restore",
     "publish:private": "vsce publish --pat $VSCE_PAT",
     "test": "vitest run",
     "test:watch": "vitest",
