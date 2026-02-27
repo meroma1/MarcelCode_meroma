@@ -8,6 +8,7 @@ const BUILT_IN_TOOLS = new Set([
   'edit_file',
   'create_directory',
   'list_files',
+  'run_workspace_command',
   'create_absolute_path_file',
   'read_absolute_path_file',
   'edit_absolute_path_file',
