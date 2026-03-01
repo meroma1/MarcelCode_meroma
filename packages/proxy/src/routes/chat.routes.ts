@@ -70,19 +70,24 @@ const WORKSPACE_TOOLS = [
   {
     name: 'run_workspace_command',
     description:
-      'Execute a command in the current workspace. Use this to run project commands like "npm run dev", "npm test", "python main.py", "mvn spring-boot:run", etc. ALWAYS ask the user for confirmation in natural language before calling this tool, clearly showing the full command and working directory. This tool only runs commands inside the workspace (never absolute paths).',
+      'Execute a command in a terminal. You CAN run projects: .bat, npm, python, etc. Use this when the user asks to launch/run/execute the project. Ask confirmation then call this tool. Works in workspace folder OR in absolute path (e.g. C:\\SNACK\\) if you pass absolute_cwd.',
     input_schema: {
       type: 'object' as const,
       properties: {
         command: {
           type: 'string',
           description:
-            'Shell command to run, exactly as you would type it in a terminal (e.g. "npm run dev"). Do NOT include dangerous operations like rm -rf.',
+            'Shell command to run (e.g. "npm run dev", "python main.py", "game.bat", ".\\.\\start.bat").',
         },
         cwd: {
           type: 'string',
           description:
-            'Optional working directory, relative to the workspace root (e.g. "packages/api"). If omitted, the command runs at the workspace root.',
+            'Optional working directory, relative to the workspace root (e.g. "packages/api"). Omit if using absolute_cwd.',
+        },
+        absolute_cwd: {
+          type: 'string',
+          description:
+            'Optional absolute working directory when the project is outside the workspace (e.g. "C:\\\\SNACK\\\\"). Use when you created files with create_absolute_path_file in a folder like C:\\SNACK\\.',
         },
       },
       required: ['command'],
@@ -193,7 +198,7 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
       }
       contextSection += '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet, crée d\'abord la structure de dossiers, puis les fichiers un par un.';
 
-      contextSection += '\n\nEXÉCUTION DE PROJET: Tu peux LANCER et EXÉCUTER des projets dans le workspace. Quand l\'utilisateur demande de "lancer", "exécuter", "démarrer" ou "run" le projet (ou un script comme les tests), utilise l\'outil run_workspace_command. Tu n\'es pas seulement un générateur de code : tu peux exécuter des commandes. Étapes : 1) Lis le package.json (ou pyproject.toml, pom.xml, etc.) pour déterminer la commande (ex: npm run dev, npm start, python main.py, mvn spring-boot:run). 2) Propose la commande à l\'utilisateur et demande confirmation. 3) Appelle run_workspace_command avec les paramètres command et éventuellement cwd (sous-dossier si pertinent). Ne refuse jamais en disant que tu es "générateur pas exécuteur" : tu as l\'outil run_workspace_command pour exécuter.';
+      contextSection += '\n\nEXÉCUTION DE PROJET: Tu as l\'outil run_workspace_command qui OUVRE UN TERMINAL et EXÉCUTE la commande. Tu peux donc lancer les projets. Quand l\'utilisateur demande de lancer/exécuter le projet (ou un .bat, npm, python, etc.) : 1) Détermine la commande (ex: "game.bat", "npm run dev", "python main.py"). 2) Si le projet est dans un dossier en dehors du workspace (ex: C:\\SNACK\\)), utilise le paramètre absolute_cwd avec ce chemin. 3) Demande confirmation à l\'utilisateur. 4) Appelle run_workspace_command avec command et, si besoin, absolute_cwd. Ne dis jamais que tu n\'as pas accès au système ou que tu ne peux pas exécuter : l\'outil le fait pour toi.';
 
       systemPrompt = systemPrompt
         ? `${systemPrompt}\n\n${contextSection}`
@@ -206,7 +211,7 @@ chatRoutes.post('/', async (req: Request, res: Response) => {
       const editInfo = '\n- edit_absolute_path_file : pour MODIFIER un fichier existant';
       const usageInfo = '\n\nQuand l\'utilisateur mentionne un chemin absolu (commençant par C:\\, D:\\, etc.) ou demande d\'expliquer/modifier un fichier, utilise IMMÉDIATEMENT read_absolute_path_file pour lire le fichier, puis explique ou modifie selon la demande. Ne demande JAMAIS à l\'utilisateur de copier-coller le code - tu peux le lire toi-même !';
       const projectInfo = '\n\nTu peux créer des projets complets avec plusieurs dossiers, sous-dossiers et fichiers. Quand l\'utilisateur demande de créer un projet dans un langage donné, crée d\'abord la structure de dossiers, puis les fichiers nécessaires (package.json, README.md, fichiers sources, etc.) un par un.';
-      const execInfo = '\n\nEXÉCUTION DE PROJET: Tu peux exécuter des commandes (lancer un projet, démarrer un serveur, lancer les tests) avec l\'outil run_workspace_command. Si l\'utilisateur demande de lancer/exécuter un projet, propose une commande puis demande confirmation avant d\'appeler run_workspace_command. Si aucun workspace n\'est ouvert, demande à l\'utilisateur d\'ouvrir un dossier dans VS Code.';
+      const execInfo = '\n\nEXÉCUTION: Tu as l\'outil run_workspace_command pour lancer des commandes (projet, .bat, npm, python). Si l\'utilisateur demande de lancer le projet, propose la commande, demande confirmation, puis appelle run_workspace_command. Pour un projet hors workspace (ex: C:\\SNACK\\), utilise absolute_cwd. Ne dis jamais que tu n\'as pas accès au système.';
       systemPrompt = systemPrompt
         ? `${systemPrompt}${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}${execInfo}`
         : `Tu es Marcel'IA, un assistant IA de développement pour les développeurs ERANOVE/GS2E. Réponds toujours en français.${absolutePathInfo}${toolsInfo}${createInfo}${editInfo}${usageInfo}${projectInfo}${execInfo}`;

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { ApiClient } from '../../services/api-client';
 import { parseSSEStream, ToolCallData } from '../../services/streaming-client';
 import { collectContext } from '../../services/context-collector';
@@ -77,6 +78,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       trigger: '/explain',
       description: 'Explique ce code en détail',
       handler: (args) => `Explique ce code en détail :\n${args}`,
+    });
+    this.pluginRegistry.slashCommands.register({
+      trigger: '/run',
+      description: 'Lance le projet (détecte la commande et exécute)',
+      handler: (args) =>
+        args.trim()
+          ? `Lance le projet : ${args}. Détecte le type de projet (package.json, pyproject.toml, .bat, etc.), propose la commande à exécuter, demande ma confirmation, puis utilise run_workspace_command pour lancer. Si le projet est hors workspace (ex: C:\\SNACK\\), utilise absolute_cwd.`
+          : `Lance ce projet. Détecte le type de projet (package.json, pyproject.toml, .bat, etc.), propose la commande à exécuter, demande ma confirmation, puis utilise run_workspace_command pour lancer dans le terminal. Si le projet est dans un dossier hors workspace, utilise absolute_cwd avec le chemin absolu.`,
+    });
+    this.pluginRegistry.slashCommands.register({
+      trigger: '/lancer',
+      description: 'Lance le projet (alias de /run)',
+      handler: (args) =>
+        args.trim()
+          ? `Lance le projet : ${args}. Détecte la commande, demande confirmation, puis utilise run_workspace_command pour exécuter. Utilise absolute_cwd si le projet est hors workspace.`
+          : `Lance ce projet. Détecte la commande, demande confirmation, puis utilise run_workspace_command. Utilise absolute_cwd si le projet est hors workspace.`,
     });
   }
 
@@ -902,6 +919,72 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
           }
         }
 
+        case 'run_workspace_command': {
+          const rawCommand = (input.command ?? '').toString().trim();
+          if (!rawCommand) {
+            return {
+              toolCallId: id,
+              content: 'Error: no command provided to run_workspace_command.',
+              isError: true,
+            };
+          }
+          const rawCwd = (input.cwd ?? '').toString().trim();
+          const absoluteCwd = (input.absolute_cwd ?? '').toString().trim();
+
+          let cwdFsPath: string;
+          if (absoluteCwd) {
+            cwdFsPath = path.normalize(absoluteCwd);
+          } else {
+            const rootFolder = this.workspaceScanner.getRootFolder();
+            if (!rootFolder) {
+              return {
+                toolCallId: id,
+                content: 'Error: no workspace folder open. Open a folder in VS Code or use absolute_cwd to run in a path like C:\\SNACK\\.',
+                isError: true,
+              };
+            }
+            cwdFsPath = rawCwd
+              ? path.join(rootFolder.uri.fsPath, rawCwd)
+              : rootFolder.uri.fsPath;
+          }
+
+          const confirmed = await this.requestInlineConfirmation(
+            id,
+            `Exécuter dans le terminal:\n\n${rawCommand}\n\nDossier: ${cwdFsPath}`,
+          );
+          if (!confirmed) {
+            this.postToWebview({
+              type: 'toolStatus',
+              toolId: id,
+              status: 'denied',
+              label: 'Commande refusée',
+            });
+            return {
+              toolCallId: id,
+              content: 'User denied the command execution.',
+              isError: true,
+            };
+          }
+
+          const terminal = vscode.window.createTerminal({
+            name: "Marcel'IA - Run Project",
+            cwd: vscode.Uri.file(cwdFsPath),
+          });
+          terminal.show(true);
+          terminal.sendText(rawCommand, true);
+
+          this.postToWebview({
+            type: 'toolStatus',
+            toolId: id,
+            status: 'done',
+            label: `Lancé: ${rawCommand}`,
+          });
+          return {
+            toolCallId: id,
+            content: `Commande exécutée dans le terminal.\nDossier: ${cwdFsPath}\nCommande: ${rawCommand}`,
+          };
+        }
+
         default: {
           // Check plugin tools registry
           if (this.pluginRegistry.tools.has(name)) {
@@ -1342,7 +1425,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div id="input-container">
       <input type="file" id="audio-input" accept="audio/*" />
       <button id="audio-btn" title="Transcrire un fichier audio">🎤</button>
-      <textarea id="message-input" placeholder="Posez une question... (/test, /doc, /review, /explain)" rows="1"></textarea>
+      <textarea id="message-input" placeholder="Posez une question... (/test, /doc, /review, /explain, /run pour lancer le projet)" rows="1"></textarea>
       <button id="send-btn" title="Envoyer"></button>
     </div>
   </div>
